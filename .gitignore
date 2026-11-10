@@ -1,0 +1,8 @@
+# Python bytecode (scripts/ is Python; there is no build step otherwise)
+__pycache__/
+*.py[cod]
+
+# Editors and OSes
+.DS_Store
+Thumbs.db
+*.swp

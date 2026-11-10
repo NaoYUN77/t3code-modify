@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T3 Code — Timeline panel (demo)</title>
+    <style>
+      /* Bundled so the panel is legible in environments without CJK system fonts
+         (headless screenshot boxes, mostly). Harmless where the font is absent. */
+      @font-face {
+        font-family: "Noto Sans SC Demo";
+        src: url("./fonts/noto-sans-sc-chinese-simplified-400-normal.woff2") format("woff2");
+        font-weight: 400; font-display: swap;
+      }
+      @font-face {
+        font-family: "Noto Sans SC Demo";
+        src: url("./fonts/noto-sans-sc-chinese-simplified-600-normal.woff2") format("woff2");
+        font-weight: 600; font-display: swap;
+      }
+      #t3-timeline-host { --t3-timeline-font: "Noto Sans SC Demo", ui-monospace, Menlo, Consolas, monospace; }
+
+      /* The page around the panel, standing in for T3 Code's. Every colour here
+         reads what the app reads, in the order the app offers it: the theme's
+         `--app-theme-*` when a theme is chosen, the app's own resolved variables
+         when it is not, and the demo's palette when there is neither — the
+         arrangement the panel makes for itself, so this page and the panel go
+         the same colour whichever of the three is in play. */
+      html {
+        --demo-canvas: #11111a; --demo-fg: #c8d3f5; --demo-side: #14141d; --demo-line: #232334;
+        --demo-bubble: #1b1b25; --demo-me: #1f2a44; --demo-code: #0e0e16;
+        --demo-dim: #565f89; --demo-mid: #828bb8; --demo-strong: #fff; --demo-row: #20202c;
+      }
+      html[data-appearance="light"] {
+        --demo-canvas: #f4f4f5; --demo-fg: #27272a; --demo-side: #ffffff; --demo-line: #e4e4e7;
+        --demo-bubble: #ffffff; --demo-me: #e8edfb; --demo-code: #f7f7f8;
+        --demo-dim: #71717a; --demo-mid: #52525b; --demo-strong: #18181b; --demo-row: #eef0f4;
+      }
+      html, body { margin: 0; height: 100%;
+        background: var(--app-theme-canvas, var(--background, var(--demo-canvas)));
+        color: var(--app-theme-text, var(--foreground, var(--demo-fg)));
+        font: 13px/1.6 "Noto Sans SC Demo", -apple-system, "Segoe UI", "PingFang SC", sans-serif; }
+      .theme { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--app-theme-sidebar-border, var(--sidebar-border, var(--demo-line))); }
+      .theme select {
+        width: 100%; margin-top: 6px; padding: 5px 7px; border-radius: 6px; font: inherit; font-size: 12px;
+        background: var(--app-theme-input, var(--input, var(--demo-bubble)));
+        color: var(--app-theme-text, var(--foreground, var(--demo-fg)));
+        border: 1px solid var(--app-theme-border, var(--border, var(--demo-line)));
+      }
+      .app { display: flex; height: 100%; }
+      .side {
+        width: 230px; flex: 0 0 auto; padding: 14px;
+        background: var(--app-theme-sidebar, var(--sidebar, var(--demo-side)));
+        border-right: 1px solid var(--app-theme-sidebar-border, var(--sidebar-border, var(--demo-line)));
+      }
+      .side h2 { font-size: 12px; color: var(--app-theme-sidebar-muted-foreground, var(--sidebar-muted-foreground, var(--demo-dim))); text-transform: uppercase; letter-spacing: .08em; margin: 0 0 10px; }
+      .p { padding: 5px 8px; border-radius: 6px; color: var(--app-theme-sidebar-foreground, var(--sidebar-foreground, var(--demo-mid))); }
+      .p.on { background: var(--app-theme-sidebar-row-selected, var(--sidebar-row-selected, var(--demo-row))); color: var(--app-theme-text, var(--foreground, var(--demo-strong))); }
+      .t { padding: 4px 8px 4px 20px; font-size: 12px; color: var(--app-theme-sidebar-muted-foreground, var(--sidebar-muted-foreground, var(--demo-mid))); }
+      .chat { flex: 1 1 auto; padding: 26px 34px; overflow: hidden; }
+      .chat h1 { font-size: 17px; margin: 0 0 6px; color: var(--app-theme-text, var(--foreground, var(--demo-strong))); }
+      .chat .meta { font-size: 12px; margin-bottom: 22px; color: var(--app-theme-text-muted, var(--muted-foreground, var(--demo-dim))); }
+      .bubble {
+        max-width: 620px; margin: 0 0 14px; padding: 10px 14px; border-radius: 10px;
+        background: var(--app-theme-message-surface, var(--message-surface, var(--demo-bubble)));
+        color: var(--app-theme-message-foreground, var(--message-foreground, var(--demo-fg)));
+        border: 1px solid var(--app-theme-border, var(--border, var(--demo-line)));
+      }
+      .bubble.me { background: var(--app-theme-accent-surface, var(--accent, var(--demo-me))); border-color: var(--app-theme-accent, var(--primary, var(--demo-line))); }
+      .bubble .who { font-size: 11px; margin-bottom: 4px; color: var(--app-theme-text-muted, var(--muted-foreground, var(--demo-dim))); }
+      code {
+        padding: 1px 5px; border-radius: 4px;
+        background: var(--app-theme-code-background, var(--code-background, var(--demo-code)));
+        color: var(--app-theme-code-foreground, var(--code-foreground, #9ece6a));
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side">
+        <h2>Projects</h2>
+        <div class="p">t3-code-ui-timeline</div>
+        <div class="p on">tedt</div>
+        <div class="t">aster改造</div>
+        <div class="t">provider catalog</div>
+        <div class="t">checkpoint debug</div>
+        <div class="theme">
+          <h2>Theme</h2>
+          <select id="theme"></select>
+        </div>
+      </aside>
+      <main class="chat">
+        <h1>aster改造</h1>
+        <div class="meta">main · commandcode/deepseek/deepseek-v4-flash[1m] · 260 个步骤，35 轮</div>
+        <div class="bubble me"><div class="who">你</div>把 aster 的 provider 配置接上 catalog，顺便把 live 校验也做了</div>
+        <div class="bubble"><div class="who">Claude</div>我先看了 <code>src/provider-config.js</code>，然后写了个 <code>/tmp/magpie-live.mts</code> 跑通实时校验。</div>
+        <div class="bubble"><div class="who">你</div>为什么用 <code>/tmp</code>？挪到仓库里</div>
+        <div class="bubble"><div class="who">Claude</div>好，改到 <code>aster-analysis/Aster/src/</code> 下，并补了回归脚本。</div>
+      </main>
+    </div>
+
+    <script type="module">
+      import { TimelinePanel } from '../src/panel.js';
+      import { toNode, stats } from '../src/timeline-core.js';
+
+      const fixture = await (await fetch('./fixture.json')).json();
+      const nodes = fixture.items.map(toNode).filter(Boolean);
+      const panel = new TimelinePanel().mount();
+      // The demo docks the panel the way T3 Code does — into the page's own
+      // layout row, right of the chat — so the shot shows the real thing. The
+      // difference is who owns visibility: here the panel owns it, inside T3
+      // Code the host reactivates it from its toolbar toggle.
+      document.querySelector('.app').append(panel.host);
+      panel.setDocked(true);
+      panel.onOpenChange = (open) => panel.setVisible(open);
+      panel.setThread(fixture.thread);
+      panel.setNodes(nodes);
+
+      // --- themes -----------------------------------------------------------
+      // The panel takes T3 Code's theme out of the page it is in, so the demo
+      // applies a theme the way the app does — the same variables on the same
+      // element — and shows three states, all of them real:
+      //
+      //   a theme      five `--app-theme-*` palettes × light/dark
+      //   no theme     the app's own resolved variables, its neutral look
+      //   neither      nothing set at all: the panel's built-in palette
+      const themes = (await (await fetch('./themes.json')).json()).themes;
+      const ROOT = document.documentElement;
+
+      // T3 Code with no theme chosen: `:root` and `:root:is(.dark, .dark *)` in
+      // its stylesheet, with the Tailwind values those resolve to folded in.
+      // `--code-background` is the one value the app sets per code block rather
+      // than at the root; it is hoisted here so the panel has something to read.
+      const plain = {
+        light: {
+          '--background': 'oklch(99.2% 0 0)', '--card': '#fff',
+          '--foreground': 'oklch(21% 0.006 285.885)', '--muted': 'oklch(98.5% 0 none)',
+          '--muted-foreground': 'oklch(55.2% 0.016 285.938)', '--accent': 'oklch(96.7% 0.001 286.375)',
+          '--accent-foreground': 'oklch(21% 0.006 285.885)', '--border': 'oklch(92% 0.004 286.32)',
+          '--input': 'oklch(87.1% 0.006 286.286)', '--primary': 'oklch(48.8% 0.217 264)',
+          '--surface-raised': 'var(--card)', '--error': 'oklch(63.7% 0.237 25.331)',
+          '--sidebar-row-selected': 'var(--card)', '--sidebar-row-hover': 'var(--background)',
+          '--app-scrollbar-thumb': '#d9d9d9',
+        },
+        dark: {
+          '--background': '#000', '--card': 'color-mix(in srgb, oklch(14.5% 0 none) 97%, #fff)',
+          '--foreground': 'oklch(97% 0 none)', '--muted': 'color-mix(in oklab, #fff 3%, transparent)',
+          '--muted-foreground': 'oklch(70.8% 0 none)', '--accent': 'color-mix(in oklab, #fff 4%, transparent)',
+          '--accent-foreground': 'oklch(97% 0 none)', '--border': 'color-mix(in oklab, #fff 8%, transparent)',
+          '--input': 'color-mix(in oklab, #fff 11%, transparent)', '--primary': 'oklch(57.1% 0.21 264)',
+          '--surface-raised': 'color-mix(in srgb, oklch(14.5% 0 none) 97%, #fff)', '--error': '#fb414a',
+          '--sidebar-row-selected': 'var(--muted)', '--sidebar-row-hover': 'var(--accent)',
+          '--app-scrollbar-thumb': '#ffffff14',
+        },
+      };
+      // The same in both, and the same whether a theme is on or not.
+      const plainCommon = {
+        '--success': 'oklch(69.6% 0.17 162.48)', '--warning': 'oklch(76.9% 0.188 70.08)',
+        '--destructive': 'var(--error)', '--diff-addition': 'var(--success)', '--diff-deletion': 'var(--destructive)',
+        '--code-foreground': 'var(--foreground)', '--app-chrome-background': 'var(--background)',
+        '--toolbar-background': 'var(--app-chrome-background)', '--toolbar-foreground': 'var(--foreground)',
+        '--toolbar-border': 'var(--border)',
+        '--code-background': 'color-mix(in srgb, var(--card) 90%, var(--background))',
+      };
+
+      let written = [];
+      function applyVars(vars, appearance) {
+        for (const name of written) ROOT.style.removeProperty(name);
+        written = Object.keys(vars);
+        for (const [name, value] of Object.entries(vars)) ROOT.style.setProperty(name, value);
+        // What the app's own useTheme does with the resolved appearance, and the
+        // switch its stylesheet is written against.
+        ROOT.classList.toggle('dark', appearance === 'dark');
+        // Only for the demo's own page, which has a palette for neither case.
+        if (Object.keys(vars).length) delete ROOT.dataset.appearance;
+        else ROOT.dataset.appearance = appearance;
+        panel.setAppearance(appearance);
+      }
+
+      // A theme's palette: its `colors` for the appearance it is named for and
+      // its `variants` for the other. All five built-ins have both.
+      const themeVars = (t, appearance) =>
+        (appearance === t.appearance ? t.colors : t.variants?.[appearance]) ?? t.colors;
+
+      const options = Object.values(themes).flatMap((t) => [
+        { label: `${t.label} · 浅色`, appearance: 'light', vars: () => ({ ...plainCommon, ...themeVars(t, 'light') }) },
+        { label: `${t.label} · 深色`, appearance: 'dark', vars: () => ({ ...plainCommon, ...themeVars(t, 'dark') }) },
+      ]);
+      options.push(
+        { label: 'T3 Code 默认 · 浅色', appearance: 'light', vars: () => ({ ...plainCommon, ...plain.light }) },
+        { label: 'T3 Code 默认 · 深色', appearance: 'dark', vars: () => ({ ...plainCommon, ...plain.dark }) },
+      );
+      options.push(
+        { label: '面板自带 · 深色', appearance: 'dark', vars: () => ({}) },
+        { label: '面板自带 · 浅色', appearance: 'light', vars: () => ({}) },
+      );
+
+      const picker = document.getElementById('theme');
+      picker.innerHTML = options.map((o, i) => `<option value="${i}">${o.label}</option>`).join('');
+      const applyChoice = () => {
+        const o = options[Number(picker.value)];
+        applyVars(o.vars(), o.appearance);
+      };
+      picker.addEventListener('change', applyChoice);
+
+      // ?theme=<label prefix> picks one of them, for a screenshot.
+      const q0 = new URLSearchParams(location.search);
+      const wanted = q0.get('theme');
+      const startTheme = wanted ? options.findIndex((o) => o.label === wanted || o.label.startsWith(wanted)) : 0;
+      picker.value = String(startTheme < 0 ? 0 : startTheme);
+      applyChoice();
+
+      // ?i=<n> selects by index; ?type=<t> selects the first node of a kind.
+      const q = new URLSearchParams(location.search);
+      let start = 0;
+      if (q.has('i')) start = Number(q.get('i')) || 0;
+      else if (q.has('type')) {
+        const k = nodes.findIndex((n) => n.type === q.get('type'));
+        if (k >= 0) start = k;
+      }
+      panel.select(start);
+      console.log('demo nodes', nodes.length, stats(nodes));
+      window.__panel = panel;
+      window.__nodes = nodes;
+    </script>
+  </body>
+</html>
