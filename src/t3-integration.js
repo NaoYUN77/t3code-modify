@@ -155,6 +155,10 @@ export class Integration {
     window.addEventListener('resize', this.onResize);
     // The panel's own close button changes the same state the toggle shows.
     this.panel.onOpenChange = () => this.#sync();
+    // Collapsing changes the panel's footprint, and docked that decides where
+    // its two buttons have to sit to stay clear of the app's floating controls
+    // — a measurement only this side can make.
+    this.panel.onLayoutChange = () => this.#reserveControlsSpace();
 
     // The theme is the app's business and it can change under us — a user theme,
     // the appearance setting, or the system. The colours themselves arrive by
@@ -255,6 +259,15 @@ export class Integration {
     if (!h.width) return;
 
     const GAP = 8;
+    // Collapsed, the strip is 34px against the same right edge the controls
+    // hang over, so it cannot dodge sideways: it goes under them instead, and
+    // its header starts below wherever they end.
+    if (this.panel.collapsed) {
+      host.style.setProperty('--t3-head-inset', '0px');
+      host.style.setProperty('--t3-head-top', `${Math.max(0, Math.round(g.bottom - h.top + GAP))}px`);
+      return;
+    }
+    host.style.setProperty('--t3-head-top', '0px');
     const overlap = Math.min(h.right, g.right) - Math.max(h.left, g.left);
     if (overlap <= 0) {
       host.style.setProperty('--t3-head-inset', '0px');

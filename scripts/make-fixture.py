@@ -119,16 +119,25 @@ def pick(items, max_items):
     that is the one that matters and the first where it is not.
     """
     kept = set()
-    seen = {}  # (turn, type) -> indices, so a run can be cut down afterwards
+    seen = {}  # (key, type) -> indices, so a group can be cut down afterwards
+    boundary = 0  # the conversation the item belongs to, counted the way the panel counts it
     for i, it in enumerate(items):
         t = it["type"]
+        if t == "user_message":
+            boundary += 1
         if t in NOTABLE:
             kept.add(i)
             continue
         budget = PER_TURN.get(t, 0)
         if not budget:
             continue
-        group = seen.setdefault((it["turn"], t), [])
+        # What is kept by the *last* is grouped by the conversation it closes
+        # rather than by the run it belongs to: a user message sent while a run
+        # is still working splits that run into two conversations, and a
+        # run-keyed budget would leave the earlier one with no answer at all —
+        # the panel would draw it as unanswered, which is a lie about the thread.
+        key = (boundary, t) if t in KEEP_LAST else (it["turn"], t)
+        group = seen.setdefault(key, [])
         group.append(i)
         kept.add(i)
         if len(group) > budget:

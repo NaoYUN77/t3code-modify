@@ -34,6 +34,7 @@ export const KEY_TYPES = [
 // role is worth, which is what lets the panel take T3 Code's theme (a theme
 // names one accent, and the roles that have one in it follow it).
 export const NODE_META = {
+  conversation: { label: '对话', glyph: '◆', accent: 'var(--tl-user)', tier: 0 },
   user_message: { label: '用户消息', glyph: '◆', accent: 'var(--tl-user)', tier: 0 },
   user_input_request: { label: '提问', glyph: '?', accent: 'var(--tl-ask)', tier: 0 },
   secret_request: { label: '密钥', glyph: '⚿', accent: 'var(--tl-secret)', tier: 0 },
@@ -130,6 +131,10 @@ export function toNode(raw) {
       node.reason = item.reason ?? '';
       node.placeholder = item.placeholder ?? '';
       node.secretStatus = item.secretStatus ?? item.status ?? '';
+      // A turn can end on this ask, so it needs a line of its own text the way
+      // an answer does — `label` and `reason` are the two that say what was
+      // asked for and why.
+      node.text = [node.label, node.reason].filter(Boolean).join(' — ');
       break;
     case 'approval_request':
       node.text = item.prompt ?? item.reason ?? '';
@@ -248,19 +253,12 @@ export function argHint(args) {
   return typeof firstString === 'string' ? firstString : '';
 }
 
-/** Pretty-print a tool call's arguments for the detail pane. */
-export function formatArgs(args) {
-  if (args == null) return '';
-  if (typeof args === 'string') return args;
-  try {
-    return JSON.stringify(args, null, 2);
-  } catch {
-    return String(args);
-  }
-}
-
 export function summarise(node) {
   switch (node.type) {
+    // A conversation is its user message: what was asked is the row, and the
+    // answer gets its own line under it.
+    case 'conversation':
+      return oneLine(node.text, 90) || '（空消息）';
     case 'user_message':
     case 'assistant_message':
     case 'proposed_plan':
@@ -348,19 +346,84 @@ export function formatTime(iso) {
   return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-/** Group nodes into turns, for the scrubber's turn ruler. */
-export function groupByTurn(nodes) {
-  const turns = [];
+/**
+ * The kinds of step that put something in front of the user: the agent's answer,
+ * the question it stopped to ask, the key or the permission it asked for. The
+ * last of these in a conversation is what the agent had to say — which is not
+ * always an `assistant_message`, because a turn can end on a question.
+ */
+export const AGENT_TAILS = ['assistant_message', 'user_input_request', 'secret_request', 'approval_request'];
+
+/**
+ * Group a thread's steps into conversations.
+ *
+ * A conversation is bounded by what the user said: one user message opens one,
+ * the next user message closes it. Everything the agent did in between — its
+ * tool calls, its file changes, its asides on the way — is counted and dropped,
+ * because what a reader wants back from a task is what they asked for and what
+ * came of it. The answer is the *last* thing the agent put in front of them
+ * before the next thing the user said.
+ *
+ * Steps before the first user message (a run woken by a notification, say) have
+ * no conversation to belong to and are left out; so is `node.steps`, which is
+ * only ever used to say how much was skipped.
+ *
+ * `turn` on the result counts *conversations*, not runs. The run ordinal is what
+ * diffs and restore points are keyed by (`run:thread:<id>:ordinal:<N>`), and the
+ * two are not the same number: everything the user sends while a run is still
+ * working splits that run into more than one conversation.
+ */
+export function conversations(nodes) {
+  const groups = [];
+  let current = null;
   for (const node of nodes) {
-    const key = node.turn ?? null;
-    let g = turns[turns.length - 1];
-    if (!g || g.turn !== key) {
-      g = { turn: key, nodes: [] };
-      turns.push(g);
+    if (node.type === 'user_message') {
+      current = { user: node, tail: null, stop: null, last: node, steps: 0, busy: false };
+      groups.push(current);
+    } else if (current) {
+      current.steps += 1;
+      current.last = node;
+      if (AGENT_TAILS.includes(node.type)) current.tail = node;
+      else if (node.type === 'run_interrupt_request' || node.type === 'run_interrupt_result' || node.type === 'error') {
+        current.stop = node;
+      }
+    } else {
+      continue;
     }
-    g.nodes.push(node);
+    // A turn item still `running` means this conversation has no last word *yet*
+    // — the work is in flight and the reply is on its way. Marked only on the
+    // last conversation: one run works at a time, so an item left `running` in an
+    // older conversation is stale (a run killed mid-item leaves one) and saying
+    // "still working" about it forever would be worse than saying nothing.
+    if (node.status === 'running') current.busy = true;
   }
-  return turns;
+
+  return groups.map((g, k) => {
+    // An interrupt or a failure only ends the conversation if it came after the
+    // agent's last word — otherwise it is what the *next* answer interrupted.
+    const stop = g.stop && (!g.tail || g.stop.position > g.tail.position) ? g.stop : null;
+    const node = {
+      position: g.user.position,
+      id: `conversation:${g.user.id}`,
+      type: 'conversation',
+      index: k + 1,
+      turn: k + 1,
+      text: g.user.text ?? '',
+      // Every tail kind carries its own text; `summary` is the fallback for one
+      // that does not, so a turn can never read as unanswered when it was not.
+      reply: g.tail ? g.tail.text || g.tail.summary || '' : '',
+      replyKind: g.tail?.type ?? null,
+      stop: stop?.type ?? null,
+      stopText: stop ? stop.message ?? stop.text ?? '' : '',
+      busy: g.busy && k === groups.length - 1,
+      steps: g.steps,
+      startedAt: g.user.startedAt ?? null,
+      endedAt: g.last.completedAt ?? g.last.startedAt ?? null,
+      raw: g.user.raw,
+    };
+    node.summary = summarise(node);
+    return node;
+  });
 }
 
 export function stats(nodes) {
@@ -413,19 +476,4 @@ export function filesFromDiff(diff) {
     }
   }
   return files;
-}
-
-/** Split a unified diff into renderable lines. */
-export function parseDiff(diff) {
-  if (!diff) return [];
-  return String(diff)
-    .split('\n')
-    .map((line) => {
-      let kind = 'ctx';
-      if (line.startsWith('+++') || line.startsWith('---')) kind = 'meta';
-      else if (line.startsWith('@@')) kind = 'hunk';
-      else if (line.startsWith('+')) kind = 'add';
-      else if (line.startsWith('-')) kind = 'del';
-      return { kind, text: line };
-    });
 }

@@ -90,7 +90,7 @@
       </aside>
       <main class="chat">
         <h1>aster改造</h1>
-        <div class="meta">main · commandcode/deepseek/deepseek-v4-flash[1m] · 260 个步骤，35 轮</div>
+        <div class="meta">main · commandcode/deepseek/deepseek-v4-flash[1m] · 260 个步骤，42 次对话</div>
         <div class="bubble me"><div class="who">你</div>把 aster 的 provider 配置接上 catalog，顺便把 live 校验也做了</div>
         <div class="bubble"><div class="who">Claude</div>我先看了 <code>src/provider-config.js</code>，然后写了个 <code>/tmp/magpie-live.mts</code> 跑通实时校验。</div>
         <div class="bubble"><div class="who">你</div>为什么用 <code>/tmp</code>？挪到仓库里</div>
@@ -100,10 +100,13 @@
 
     <script type="module">
       import { TimelinePanel } from '../src/panel.js';
-      import { toNode, stats } from '../src/timeline-core.js';
+      import { conversations, toNode, stats } from '../src/timeline-core.js';
 
       const fixture = await (await fetch('./fixture.json')).json();
-      const nodes = fixture.items.map(toNode).filter(Boolean);
+      const steps = fixture.items.map(toNode).filter(Boolean);
+      // The panel draws conversations, so the demo hands it the same thing the
+      // live client does: the fixture's steps, grouped by what the user asked.
+      const nodes = conversations(steps);
       const panel = new TimelinePanel().mount();
       // The demo docks the panel the way T3 Code does — into the page's own
       // layout row, right of the chat — so the shot shows the real thing. The
@@ -209,18 +212,14 @@
       picker.value = String(startTheme < 0 ? 0 : startTheme);
       applyChoice();
 
-      // ?i=<n> selects by index; ?type=<t> selects the first node of a kind.
+      // ?i=<n> selects the nth conversation, for a screenshot.
       const q = new URLSearchParams(location.search);
-      let start = 0;
-      if (q.has('i')) start = Number(q.get('i')) || 0;
-      else if (q.has('type')) {
-        const k = nodes.findIndex((n) => n.type === q.get('type'));
-        if (k >= 0) start = k;
-      }
+      const start = q.has('i') ? Number(q.get('i')) || 0 : 0;
       panel.select(start);
-      console.log('demo nodes', nodes.length, stats(nodes));
+      console.log('demo', nodes.length, 'conversations from', steps.length, 'steps', stats(steps));
       window.__panel = panel;
       window.__nodes = nodes;
+      window.__steps = steps;
     </script>
   </body>
 </html>
