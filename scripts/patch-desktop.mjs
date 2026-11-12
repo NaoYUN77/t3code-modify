@@ -354,6 +354,26 @@ function prelude() {
   return `(() => {
   ${config}const net = (window.__t3panelNet = window.__t3panelNet || {});
   const abs = (u) => { try { return new URL(String(u), location.href); } catch { return null; } };
+  // What page this is, and what the preload bridge exposes. The app does not
+  // make its HTTP calls through window.fetch (the ticket request from the
+  // panel came back 405 from the page's own origin), so the bridge is where
+  // its address and bearer token have to come from.
+  try {
+    net.env = { protocol: location.protocol, host: location.host, href: String(location.href).slice(0, 120) };
+    const b = window.desktopBridge;
+    if (b) {
+      const names = new Set();
+      for (let o = b; o && o !== Object.prototype; o = Object.getPrototypeOf(o)) {
+        for (const k of Object.getOwnPropertyNames(o)) {
+          if (k === 'constructor') continue;
+          let t = typeof b[k];
+          if (t === 'function' && b[k].length === 0) t = 'fn';
+          names.add(k + (t === 'fn' ? '()' : ':' + t));
+        }
+      }
+      net.bridge = [...names].slice(0, 40);
+    }
+  } catch (e) { net.env = { error: String(e && e.message) }; }
   const norm = (h) => {
     if (!h) return null;
     try {
