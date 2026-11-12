@@ -135,8 +135,9 @@ export async function boot() {
     integration.setActive(true);
     panel.setThread({ title: '正在连接 T3 Code…', id: threadId });
     try {
-      client = await new T3Client(await resolveTransport()).connect();
-      log('connected for', threadId);
+      const transport = await resolveTransport();
+      client = await new T3Client(transport).connect();
+      log('connected for', threadId, transport?.base || location.origin);
 
       let refetch = null;
       const resync = () => {
@@ -157,6 +158,19 @@ export async function boot() {
         // bound, which is all it draws.
         nodes = mergeNodes(nodes, nodesFromProjection(projection));
         panel.setNodes(conversations(nodes));
+        // In the desktop app there is no address bar and DevTools may be out of
+        // reach, so an empty panel says what it knows: which thread it followed,
+        // how many raw items came back, and from which server.
+        if (window.__t3panelNet) {
+          const raw = (projection?.turnItems ?? []).length;
+          const visible = (projection?.visibleTurnItems ?? []).length;
+          panel.setEmptyNote(
+            nodes.length
+              ? ''
+              : `thread ${String(threadId).slice(0, 8)} · 原始 ${raw} 条 / 可见 ${visible} 条 · ` +
+                `${transport?.base || window.__t3panelNet.base || ''}`,
+          );
+        }
       };
 
       for await (const item of subscribeThread(client, threadId)) {
