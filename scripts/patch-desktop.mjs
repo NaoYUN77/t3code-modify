@@ -410,17 +410,41 @@ function prelude() {
     try { frame = JSON.parse(data); } catch { return; }
     for (const item of Array.isArray(frame) ? frame : [frame]) {
       const id = item && item.payload && item.payload.threadId;
-      if (typeof id === 'string' && UUID.test(id)) net.threadId = id;
+      if (typeof id !== 'string' || !UUID.test(id)) continue;
+      // A subscription names the thread on screen; anything else may be
+      // background work for some other thread, so it only fills a blank.
+      const tag = String((item && item.tag) || '');
+      if (!net.threadId || /subscribe/i.test(tag)) net.threadId = id;
     }
+  };
+  // Incoming frames carry the snapshot of whichever thread the app is showing;
+  // use them only to fill the id in when an outgoing request has not named one
+  // (the app also talks about other threads).
+  const noteIncoming = (data) => {
+    if (typeof data !== 'string' || data.length > 2000000) return;
+    let frame;
+    try { frame = JSON.parse(data); } catch { return; }
+    const visit = (o, depth) => {
+      if (net.threadId || !o || typeof o !== 'object' || depth > 5) return;
+      if (Array.isArray(o)) { for (const v of o) visit(v, depth + 1); return; }
+      if (typeof o.threadId === 'string' && UUID.test(o.threadId)) { net.threadId = o.threadId; return; }
+      if (o.thread && typeof o.thread.id === 'string' && UUID.test(o.thread.id)) { net.threadId = o.thread.id; return; }
+      for (const k in o) { const v = o[k]; if (v && typeof v === 'object') visit(v, depth + 1); }
+    };
+    visit(frame, 0);
   };
   const W = window.WebSocket;
   if (W) {
     function W2(url, protocols) {
       const ws = protocols === undefined ? new W(url) : new W(url, protocols);
       try {
-        net.ws = String(url);
+        net.ws = String(url).split('?')[0];
+        // The app's own socket, kept so the panel can ride on it: its HTTP is
+        // behind the preload bridge, but this is an ordinary WebSocket.
+        net.socket = ws;
         const send0 = ws.send;
         ws.send = function (data) { try { noteFrame(String(data)); } catch {} return send0.apply(this, arguments); };
+        ws.addEventListener('message', (e) => { try { noteIncoming(e.data); } catch {} });
       } catch {}
       return ws;
     }

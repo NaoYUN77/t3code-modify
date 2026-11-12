@@ -47,6 +47,41 @@ export class T3Client extends EventTarget {
     this.transport = transport;
     this.nextId = 1;
     this.pending = new Map();
+    this.ownsSocket = true;
+  }
+
+  /**
+   * Ride on a socket somebody else opened.
+   *
+   * The desktop app keeps its HTTP behind a preload bridge (no address, no
+   * bearer token reachable from the page), but its RPC socket is an ordinary
+   * WebSocket the page can see. The server multiplexes streams by request id,
+   * so the panel can send its own requests on it — as long as the ids cannot
+   * collide with the app's, which start small. This client never closes a
+   * socket it does not own; it just stops listening.
+   */
+  async attach(ws) {
+    this.ownsSocket = false;
+    this.ws = ws;
+    // Well clear of the ids the app issues.
+    this.nextId = 1_000_000_000;
+    this.onMessage = (e) => {
+      try {
+        this.#onFrame(JSON.parse(e.data));
+      } catch {
+        /* not JSON, or not ours */
+      }
+    };
+    this.onClose = () => this.dispatchEvent(new CustomEvent('closed'));
+    ws.addEventListener('message', this.onMessage);
+    ws.addEventListener('close', this.onClose);
+    await new Promise((resolve, reject) => {
+      if (ws.readyState === 1) return resolve();
+      if (ws.readyState === 3) return reject(new Error('socket closed'));
+      ws.addEventListener('open', () => resolve(), { once: true });
+      ws.addEventListener('error', () => reject(new Error('websocket connection failed')), { once: true });
+    });
+    return this;
   }
 
   async connect() {
@@ -154,7 +189,11 @@ export class T3Client extends EventTarget {
 
   close() {
     try {
-      this.ws?.close();
+      if (this.ownsSocket) this.ws?.close();
+      else if (this.ws && this.onMessage) {
+        this.ws.removeEventListener('message', this.onMessage);
+        this.ws.removeEventListener('close', this.onClose);
+      }
     } catch {
       /* already closed */
     }

@@ -58,9 +58,11 @@ async function resolveTransport() {
   const cfg = window.__t3panelConfig || {};
   const fallback = () => {
     if (cfg.serverUrl) return { base: String(cfg.serverUrl).replace(/\/$/, ''), headers: cfg.headers || {} };
-    // The prelude also records the app's own socket, and its URL names the
-    // server even when the ticket request could not be seen: same server, a
-    // relative fetch would otherwise hit the page's own origin instead.
+    // The app's HTTP is behind its preload bridge, so there is no address or
+    // token to capture — but its RPC socket is an ordinary WebSocket the page
+    // can see, and the server multiplexes streams by request id. Ride on it.
+    if (net?.socket && net.socket.readyState !== 3) return { socket: net.socket };
+    // Failing that, the socket's URL at least names the server.
     if (net?.ws) {
       try {
         return { base: new URL(net.ws).origin };
@@ -84,10 +86,12 @@ async function resolveTransport() {
   // About 30 s when nothing has been seen yet — the app asks for a ticket at
   // startup and on every reconnect. If its socket is already known, the app is
   // plainly not using window.fetch for that request, so do not wait for it.
-  const waits = net.ws ? 8 : 120;
+  const waits = net.ws || net.socket ? 8 : 120;
   for (let i = 0; i < waits; i += 1) {
     const t = captured();
     if (t) return t;
+    // The app opened its socket while this waited; the fallback can use it.
+    if (net.socket) break;
     await new Promise((r) => setTimeout(r, 250));
   }
   return fallback();
@@ -153,15 +157,41 @@ export async function boot() {
     const net = window.__t3panelNet;
     if (net) {
       panel.setEmptyNote(
-        `等待服务器地址… 捕获：base ${net.base || '无'} · ticket ${net.ticket ? '有' : '无'} · ` +
-          `headers ${net.headers ? '有' : '无'}`,
+        `正在接入 App 的连接… 捕获：base ${net.base || '无'} · ticket ${net.ticket ? '有' : '无'} · ` +
+          `socket ${net.ws ? '有' : '无'}`,
       );
     }
     try {
       const transport = await resolveTransport();
-      client = await new T3Client(transport).connect();
-      if (net) panel.setEmptyNote(`已连接 ${transport?.base || location.origin} · 等待快照…`);
-      log('connected for', threadId, transport?.base || location.origin);
+      // Riding the app's socket needs no address and no token; anything else
+      // (the web client, or a build whose ticket request is visible) connects
+      // on its own. The app may also have replaced its socket in the last
+      // moment; then the address still names the server.
+      if (transport?.socket) {
+        client = await new T3Client().attach(transport.socket).catch(() => {
+          let base = '';
+          try {
+            base = window.__t3panelNet?.ws ? new URL(window.__t3panelNet.ws).origin : '';
+          } catch {
+            /* leave empty: connect() will say the address is missing */
+          }
+          return new T3Client({ base }).connect();
+        });
+      } else {
+        client = await new T3Client(transport).connect();
+      }
+      // The socket can go away (the app reconnects on its own schedule); when
+      // it does, resolve the transport again and resubscribe.
+      client.addEventListener('closed', () => {
+        setTimeout(() => {
+          if (currentThread !== threadId) return;
+          currentThread = undefined;
+          watch(threadId);
+        }, 1000);
+      });
+      const where = transport?.socket ? 'App 的 socket' : transport?.base || location.origin;
+      if (net) panel.setEmptyNote(`已连接 ${where} · 等待快照…`);
+      log('connected for', threadId, where);
 
       let refetch = null;
       const resync = () => {
@@ -192,7 +222,7 @@ export async function boot() {
             nodes.length
               ? ''
               : `thread ${String(threadId).slice(0, 8)} · 原始 ${raw} 条 / 可见 ${visible} 条 · ` +
-                `${transport?.base || window.__t3panelNet.base || ''}`,
+                `${transport?.socket ? 'App 的 socket' : transport?.base || window.__t3panelNet.base || ''}`,
           );
         }
       };
