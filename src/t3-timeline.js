@@ -7,6 +7,7 @@
 import { TimelinePanel } from './panel.js';
 import { Integration } from './t3-integration.js';
 import { T3Client, rpc, subscribeThread } from './t3-rpc.js';
+import { startSidebarGrouping } from './t3-sidebar.js';
 import { conversations, toNode } from './timeline-core.js';
 
 const DEBUG = new URLSearchParams(location.search).has('t3TimelineDebug');
@@ -134,7 +135,11 @@ export async function boot() {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => boot());
+  document.addEventListener('DOMContentLoaded', () => {
+    startSidebarGrouping();
+    boot();
+  });
 } else {
+  startSidebarGrouping();
   boot();
 }
