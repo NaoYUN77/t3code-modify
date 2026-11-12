@@ -15,10 +15,19 @@ window.__T3_TIMELINE_DEBUG = DEBUG;
 const log = (...a) => DEBUG && console.log('[timeline]', ...a);
 
 function threadIdFromLocation() {
+  // The desktop app's page never changes address (it is a file:// page in the
+  // app bundle), so the prelude in the injected build records the thread id the
+  // app itself asked for and that is the answer there.
+  const fromApp = window.__t3panelNet?.threadId;
+  if (fromApp) return fromApp;
+
+  // A hash router would keep the route in the fragment; the web client keeps it
+  // in the path. Read whichever is there.
+  const route = location.hash.startsWith('#/') ? location.hash.slice(1) : location.pathname;
   // The client canonicalises /threads/<environmentId>/<threadId> to
   // /<environmentId>/<threadId>, so read the trailing uuid instead of the
   // route shape: it is the thread id either way.
-  const parts = location.pathname.split('/').filter(Boolean);
+  const parts = route.split('/').filter(Boolean);
   // A new thread's composer is /draft/<uuid> until its first message creates
   // the thread. That id is not a thread id — subscribing to it would leave the
   // panel docked and empty over a conversation that does not exist yet, so the
@@ -28,6 +37,46 @@ function threadIdFromLocation() {
   return last && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(last)
     ? decodeURIComponent(last)
     : null;
+}
+
+/**
+ * Where the RPC lives.
+ *
+ * In the web client everything is same-origin: no transport, and T3Client uses
+ * relative paths. The desktop app is not — its renderer is loaded from the app
+ * bundle while the server is remote, and it authenticates with a bearer token
+ * instead of the browser's cookie. `patch-desktop.mjs` injects a prelude that
+ * records the address, ticket route and headers the app itself used, and this
+ * reads them back.
+ *
+ * The prelude runs before the app has necessarily made a request, so this waits
+ * for one. `__t3panelConfig` (the patch script's `--server-url`) is the fallback
+ * for a build whose requests do not go through window.fetch.
+ */
+async function resolveTransport() {
+  const net = window.__t3panelNet;
+  const cfg = window.__t3panelConfig || {};
+  const fallback = () =>
+    cfg.serverUrl ? { base: String(cfg.serverUrl).replace(/\/$/, ''), headers: cfg.headers || {} } : undefined;
+  if (!net) return fallback();
+
+  const captured = () => {
+    if (!net.ticket) return null;
+    try {
+      const u = new URL(net.ticket);
+      return { base: u.origin, ticketPath: u.pathname, headers: net.headers || {} };
+    } catch {
+      return null;
+    }
+  };
+  // About 30 s: the app asks for a ticket when its socket (re)connects, which is
+  // at startup and on every reconnect.
+  for (let i = 0; i < 120; i += 1) {
+    const t = captured();
+    if (t) return t;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return fallback();
 }
 
 function nodesFromProjection(projection) {
@@ -86,7 +135,7 @@ export async function boot() {
     integration.setActive(true);
     panel.setThread({ title: '正在连接 T3 Code…', id: threadId });
     try {
-      client = await new T3Client().connect();
+      client = await new T3Client(await resolveTransport()).connect();
       log('connected for', threadId);
 
       let refetch = null;
@@ -121,12 +170,15 @@ export async function boot() {
     }
   };
 
-  // Follow client-side navigation without hooking the router.
-  let lastHref = location.href;
+  // Follow client-side navigation without hooking the router. The desktop app
+  // moves between threads without touching the address, so the thread id the
+  // prelude captured is part of what is watched.
+  const routeKey = () => `${location.href}|${window.__t3panelNet?.threadId || ''}`;
+  let lastRoute = routeKey();
   setInterval(() => {
-    if (location.href === lastHref) return;
-    lastHref = location.href;
-    log('route', location.pathname);
+    if (routeKey() === lastRoute) return;
+    lastRoute = routeKey();
+    log('route', location.pathname, window.__t3panelNet?.threadId);
     watch(threadIdFromLocation());
   }, 400);
 

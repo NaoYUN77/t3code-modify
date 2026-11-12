@@ -17,10 +17,19 @@
 
 export const ORCHESTRATION_PROTOCOL = 2;
 
-async function websocketTicket() {
-  const res = await fetch('/api/auth/websocket-ticket', {
+/**
+ * Exchange the session for a one-time socket ticket.
+ *
+ * In the web client everything is same-origin: a relative path and the cookie
+ * the browser already holds. In the desktop app the renderer is local and the
+ * server is remote, and it authenticates with a bearer token instead, so the
+ * caller passes the address, the ticket route and the headers the app itself
+ * used (`transport` in t3-timeline.js).
+ */
+async function websocketTicket({ base = '', ticketPath = '/api/auth/websocket-ticket', headers = {} } = {}) {
+  const res = await fetch(`${base}${ticketPath}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: '{}',
     credentials: 'include',
   });
@@ -33,17 +42,25 @@ async function websocketTicket() {
 }
 
 export class T3Client extends EventTarget {
-  constructor() {
+  constructor(transport = {}) {
     super();
+    this.transport = transport;
     this.nextId = 1;
     this.pending = new Map();
   }
 
   async connect() {
-    const ticket = await websocketTicket();
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const { base = '' } = this.transport;
+    // A renderer loaded from the app bundle has no host of its own; without a
+    // captured server address there is nothing to talk to yet.
+    if (!base && !location.host) throw new Error('还没有拿到服务器地址');
+    const ticket = await websocketTicket(this.transport);
+    // Same origin when no base is given; the desktop app's remote server
+    // otherwise. `new URL` keeps any path the base carries.
+    const socket = new URL('/ws', base || `${location.protocol}//${location.host}`);
+    socket.protocol = socket.protocol === 'https:' ? 'wss:' : 'ws:';
     const url =
-      `${proto}//${location.host}/ws` +
+      `${socket.origin}${socket.pathname}` +
       `?orchestrationProtocol=${ORCHESTRATION_PROTOCOL}` +
       `&wsTicket=${encodeURIComponent(ticket)}`;
 
