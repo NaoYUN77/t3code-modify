@@ -90,10 +90,20 @@ const CSS = `
   top: 0; right: 0; bottom: 0;
   width: 420px;
   display: flex; flex-direction: column;
-  background: linear-gradient(180deg, var(--tl-surface) 0%, var(--tl-surface-2) 100%);
+  /* Flat, like the app's own panels — no gradient of our own to clash with the
+     theme's surface. The detail pane below is the one raised step. */
+  background: var(--tl-surface);
   color: var(--tl-fg);
-  font-family: var(--t3-timeline-font, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace);
-  font-size: 12.5px; line-height: 1.5;
+  /* T3 Code's own face and scale, not a lookalike: the app sets --font-sans on
+     its root and custom properties cross the shadow boundary, so every piece of
+     text here is drawn in exactly the font the app's own panels use — Inter
+     Variable where it is installed, Segoe UI on Windows, and whatever a user
+     theme points --font-sans at. The sizes follow the app's tokens too: 14px
+     for rows (--text-sm), 12px for meta (--text-xs), 11px for the smallest
+     labels (--text-2xs). --t3-timeline-font stays as the escape hatch for a
+     host that has none of that (the demo harness). */
+  font-family: var(--t3-timeline-font, var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif));
+  font-size: var(--text-sm, 14px); line-height: 1.5;
   border-left: 1px solid var(--tl-line);
   box-shadow: -24px 0 48px rgba(0,0,0,.45);
   z-index: 2147483000;
@@ -178,14 +188,14 @@ const CSS = `
   flex: 0 0 auto;
 }
 .head-text { flex: 1 1 auto; min-width: 0; }
-.head h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--tl-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.head .sub { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--tl-fg-faint); min-width: 0; }
+.head h1 { margin: 0; font-size: var(--text-sm, 14px); font-weight: 600; color: var(--tl-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head .sub { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs, 12px); color: var(--tl-fg-faint); min-width: 0; }
 .head .sub .thread { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The stats keep their width where a thread title can give up its own: a
    half-shown count is useless, and the title is legible in the page the panel
    is docked beside. On the second line they also get the width the first line
    has to share with the window buttons. */
-.badge { flex: 0 0 auto; font-size: 10px; white-space: nowrap; color: var(--tl-fg-faint); border: 1px solid var(--tl-line); border-radius: 999px; padding: 1px 7px; }
+.badge { flex: 0 0 auto; font-size: var(--text-2xs, 11px); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--tl-fg-faint); border: 1px solid var(--tl-line); border-radius: 999px; padding: 1px 7px; }
 .icobtn {
   flex: 0 0 auto; width: 22px; height: 22px; display: grid; place-items: center;
   background: transparent; color: var(--tl-fg-dim); border: 1px solid var(--tl-line);
@@ -197,13 +207,13 @@ const CSS = `
 
 .scrub { padding: 12px 14px 10px; border-bottom: 1px solid var(--tl-line); flex: 0 0 auto; }
 .readout { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
-.readout .pos { font-size: 15px; color: var(--tl-strong); font-weight: 600; }
-.readout .pos small { font-size: 11px; color: var(--tl-fg-faint); font-weight: 400; }
-.readout .turn { font-size: 11px; color: var(--tl-fg-faint); }
+.readout .pos { font-size: 15px; color: var(--tl-strong); font-weight: 600; font-variant-numeric: tabular-nums; }
+.readout .pos small { font-size: var(--text-2xs, 11px); color: var(--tl-fg-faint); font-weight: 400; }
+.readout .turn { font-size: var(--text-xs, 12px); color: var(--tl-fg-faint); }
 .track { position: relative; height: 42px; cursor: pointer; touch-action: none; user-select: none; }
 .inner { position: absolute; left: 7px; right: 7px; top: 0; bottom: 0; }
 .turnmarks { position: absolute; left: 0; right: 0; top: 0; height: 14px; }
-.turnmark { position: absolute; top: 0; font-size: 9.5px; color: var(--tl-fg-faint); transform: translateX(-50%); pointer-events: none; }
+.turnmark { position: absolute; top: 0; font-size: var(--text-2xs, 11px); color: var(--tl-fg-faint); transform: translateX(-50%); pointer-events: none; }
 .rail { position: absolute; left: 0; right: 0; top: 25px; height: 3px; background: var(--tl-line); border-radius: 2px; }
 .fill {
   position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px;
@@ -229,7 +239,7 @@ const CSS = `
 }
 .handle:active { cursor: grabbing; }
 .handle::after { content: ""; position: absolute; left: 5px; top: 6px; width: 1px; height: 9px; background: var(--tl-fg-faint); }
-.legend { display: flex; gap: 10px; margin-top: 8px; font-size: 10px; color: var(--tl-fg-faint); }
+.legend { display: flex; gap: 10px; margin-top: 8px; font-size: var(--text-2xs, 11px); color: var(--tl-fg-faint); }
 .legend i { font-style: normal; }
 
 .detail {
@@ -241,17 +251,17 @@ const CSS = `
 .detail .dscroll { overflow: auto; min-height: 0; }
 .detail .dhead { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
 .detail .name { font-weight: 600; color: var(--tl-strong); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.detail .when { margin-left: auto; color: var(--tl-fg-faint); white-space: nowrap; }
-.chip { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; flex: 0 0 auto; }
+.detail .when { margin-left: auto; color: var(--tl-fg-faint); white-space: nowrap; font-size: var(--text-2xs, 11px); font-variant-numeric: tabular-nums; }
+.chip { font-size: var(--text-2xs, 11px); padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; flex: 0 0 auto; }
 .msg { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--tl-fg); }
 .msg.quote { border-left: 2px solid var(--tl-accent); padding-left: 9px; color: var(--tl-code-fg); }
 /* The two halves of a conversation in the detail pane: what was asked, then
    what came of it. A label over the message rather than a box around it — the
    reply is prose, not a diff. */
-.iohead { margin: 9px 0 4px; color: var(--tl-fg-faint); font-size: 10.5px; }
+.iohead { margin: 9px 0 4px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
 .iohead:first-child { margin-top: 0; }
 .msg.none { color: var(--tl-fg-faint); }
-.outcome { margin-top: 6px; color: var(--tl-fg-faint); font-size: 10.5px; }
+.outcome { margin-top: 6px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
 
 .list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 6px 14px; scrollbar-color: var(--tl-scroll) transparent; }
 .row {
@@ -261,15 +271,15 @@ const CSS = `
 .row:hover { background: var(--tl-hover); }
 .row.on { background: var(--tl-sel); color: var(--tl-sel-fg); box-shadow: inset 2px 0 0 var(--tl-accent); }
 .row.on .sum, .row.on .no, .row.on .time { color: inherit; }
-.row .no { color: var(--tl-fg-faint); font-size: 10.5px; text-align: right; }
+.row .no { color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); text-align: right; font-variant-numeric: tabular-nums; }
 .row .txt { min-width: 0; }
 .row .lead { display: flex; align-items: baseline; gap: 6px; }
 .row .sum { color: var(--tl-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .time { margin-left: auto; color: var(--tl-fg-faint); font-size: 10.5px; }
+.row .time { margin-left: auto; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); font-variant-numeric: tabular-nums; }
 /* A conversation is two lines — what was asked, what came of it — and the row is
    the boundary between one conversation and the next, so it carries the rule. */
 .row.conv + .row.conv { border-top: 1px solid var(--tl-line); border-radius: 0; }
-.row .rep { display: flex; gap: 6px; margin-top: 2px; color: var(--tl-fg-dim); font-size: 11.5px; }
+.row .rep { display: flex; gap: 6px; margin-top: 2px; color: var(--tl-fg-dim); font-size: var(--text-xs, 12px); }
 .row .rep > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .rep .mark { color: var(--tl-fg-faint); }
 .row .rep.none { color: var(--tl-fg-faint); }
@@ -277,12 +287,12 @@ const CSS = `
 .row.s1 { opacity: .82; }
 .row.s2 { opacity: .6; }
 .row.s1 .sum, .row.s2 .sum { color: var(--tl-fg-dim); }
-.turnsep { display: flex; align-items: center; gap: 8px; margin: 9px 8px 3px; color: var(--tl-fg-faint); font-size: 10px; }
+.turnsep { display: flex; align-items: center; gap: 8px; margin: 9px 8px 3px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
 .turnsep::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--tl-line); }
 .turnsep.edge { margin: 7px 8px; color: var(--tl-fg-faint); }
 .turnsep.edge::after { flex: 0 0 0; }
 .empty { color: var(--tl-fg-faint); padding: 20px 14px; text-align: center; }
-.empty .note { display: block; margin-top: 6px; font-size: 11px; opacity: .75; word-break: break-all; white-space: pre-line; }
+.empty .note { display: block; margin-top: 6px; font-size: var(--text-xs, 12px); opacity: .75; word-break: break-all; white-space: pre-line; }
 `;
 
 export class TimelinePanel {

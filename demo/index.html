@@ -17,7 +17,10 @@
         src: url("./fonts/noto-sans-sc-chinese-simplified-600-normal.woff2") format("woff2");
         font-weight: 600; font-display: swap;
       }
-      #t3-timeline-host { --t3-timeline-font: "Noto Sans SC Demo", ui-monospace, Menlo, Consolas, monospace; }
+      /* The panel reads T3 Code's own --font-sans when it is there; this page is
+         no T3 Code, so it hands the panel a face with the same shapes (and CJK
+         glyphs, for the screenshots). */
+      #t3-timeline-host { --t3-timeline-font: "Noto Sans SC Demo", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 
       /* The page around the panel, standing in for T3 Code's. Every colour here
          reads what the app reads, in the order the app offers it: the theme's
