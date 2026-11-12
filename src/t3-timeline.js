@@ -182,13 +182,6 @@ export async function boot() {
     watch(threadIdFromLocation());
   }, 400);
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 't' && (e.metaKey || e.ctrlKey) && e.shiftKey) {
-      e.preventDefault();
-      panel.setOpen(!panel.open);
-    }
-  });
-
   await watch(threadIdFromLocation());
 }
 
