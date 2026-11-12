@@ -68,6 +68,45 @@ file change's diff or a tool call's output looks like. That is the layer that
 decides what a step is; `conversations()` is the fold on top of it, and it is
 what the panel is handed.
 
+## Threads grouped under their project
+
+The same script also re-sorts the client's sidebar, so threads from one project
+sit together under a heading for that project:
+
+![the sidebar, one heading per project](docs/sidebar-grouped.png)
+
+T3 Code **0.1.7 does not do this itself**. Its sidebar is a single list sorted by
+recency, and every card repeats its project's name in small type — on this
+machine 23 of the 27 threads are in one project, so that name is on 23 cards out
+of 27 and the list still does not say which threads belong together. The app does
+have a per-project *filter* (the funnel next to the search box), and
+`sidebarProjectGrouping-*.js` groups *projects* that share a repository across
+environments — but nothing nests threads under a project.
+
+The grouping is applied to the rendered list rather than to the app's data:
+
+- **Nothing the app owns is moved.** The list is a flex column, so CSS `order`
+  re-sorts the cards without touching the DOM; the only nodes added are heading
+  `li`s, which React never sees and never removes.
+- **Inside a project the cards keep the app's order** (newest first), and
+  projects are ordered by their most recent thread, so the top of the list is
+  still the newest thing that happened.
+- **A card's project is not in the DOM.** Rows carry no project attribute; the
+  name comes from the React props the row was rendered from (`thread`,
+  `project`, `projectDisplayName`), reached through the `__reactFiber$` property
+  React leaves on every element. If that ever stops working the list simply goes
+  back to being flat — the app's own look.
+- **The project group's name is what groups them**, not the project folder: the
+  app can show one group across several environments, and the heading says what
+  the cards used to say. The per-card copy is then hidden, since the heading
+  covers it; the project's icon stays.
+- The zero-height dividers the app inserts between recency buckets are hidden —
+  they mean nothing once the order is by project.
+
+Two ways off, if you would rather have the app's flat list:
+`localStorage['t3sidebar:group'] = '0'` and reload, or add `?t3NoSidebarGroup` to
+the client's URL.
+
 ## The style: it wears the app's theme
 
 Nothing about the panel's colours is its own when T3 Code is behind it, and
@@ -149,6 +188,7 @@ file.
 install.mjs            patch / unpatch the T3 Code client (backs up index.html)
 src/t3-timeline.js     entry point: follows the SPA route, subscribes, folds, feeds the panel
 src/t3-integration.js  dock the panel in the thread page and clone its toolbar toggle
+src/t3-sidebar.js      group the sidebar's thread cards under their project
 src/t3-rpc.js          the T3 WebSocket client (ticket auth + JSON RPC frames)
 src/timeline-core.js   which turn items become steps, how a step is shaped, and the fold
 src/panel.js           the panel itself (shadow DOM, no build step)
@@ -175,6 +215,11 @@ The header carries two buttons of its own. `⟩` collapses the panel to a 34px
 strip — the column hands its width back to the chat and keeps only those two
 buttons — and the strip's `⟨` expands it again. `×` closes the panel outright,
 which is what the toolbar toggle or `⌘/Ctrl+Shift+T` undoes.
+
+The sidebar's thread list is also re-sorted into one run per project — no
+settings, it is on once the script loads; see
+[Threads grouped under their project](#threads-grouped-under-their-project) for
+what it does and the two ways to turn it off.
 
 Note: `t3 update` replaces the client, so re-run `node install.mjs` afterwards.
 
@@ -341,6 +386,10 @@ CJK system fonts.
   stuck reads exactly like one that is thinking, and a run killed mid-item leaves
   a `running` item behind. The run's own status is the thing worth reading, and
   the panel does not have it in the snapshot it gets.
+- **Collapsing a project group in the sidebar.** The headings are labels; there
+  is no fold, no count, and no drag between groups. They also cover only the rows
+  the app has rendered — the sidebar's own window of recent threads — because
+  grouping sorts what is on screen rather than what is in the store.
 - **The app's own accent choices.** The panel takes the theme's accent for what
   was answered and the theme's error for what was not, but T3 Code also has
   separate tokens for a message's action button and a secondary label that a

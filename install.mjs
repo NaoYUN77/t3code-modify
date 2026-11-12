@@ -20,7 +20,7 @@ import os from 'node:os';
 const SRC_DIR = path.join(import.meta.dirname, 'src');
 const ASSET_PREFIX = 't3-timeline';
 const MARKER = '<!-- t3-timeline:panel -->';
-const ASSET_FILES = ['t3-timeline.js', 'panel.js', 'timeline-core.js', 't3-rpc.js', 't3-integration.js'];
+const ASSET_FILES = ['t3-timeline.js', 'panel.js', 'timeline-core.js', 't3-rpc.js', 't3-integration.js', 't3-sidebar.js'];
 
 const argv = process.argv.slice(2);
 const flag = (name) => argv.includes(name);

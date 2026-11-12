@@ -7,6 +7,7 @@
 import { TimelinePanel } from './panel.js';
 import { Integration } from './t3-integration.js';
 import { T3Client, rpc, subscribeThread } from './t3-rpc.js';
+import { startSidebarGrouping } from './t3-sidebar.js';
 import { conversations, toNode } from './timeline-core.js';
 
 const DEBUG = new URLSearchParams(location.search).has('t3TimelineDebug');
@@ -17,7 +18,13 @@ function threadIdFromLocation() {
   // The client canonicalises /threads/<environmentId>/<threadId> to
   // /<environmentId>/<threadId>, so read the trailing uuid instead of the
   // route shape: it is the thread id either way.
-  const last = location.pathname.split('/').filter(Boolean).at(-1);
+  const parts = location.pathname.split('/').filter(Boolean);
+  // A new thread's composer is /draft/<uuid> until its first message creates
+  // the thread. That id is not a thread id — subscribing to it would leave the
+  // panel docked and empty over a conversation that does not exist yet, so the
+  // panel waits until the route becomes /<environmentId>/<threadId>.
+  if (parts.includes('draft')) return null;
+  const last = parts.at(-1);
   return last && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(last)
     ? decodeURIComponent(last)
     : null;
@@ -134,7 +141,11 @@ export async function boot() {
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => boot());
+  document.addEventListener('DOMContentLoaded', () => {
+    startSidebarGrouping();
+    boot();
+  });
 } else {
+  startSidebarGrouping();
   boot();
 }
