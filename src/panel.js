@@ -2,6 +2,7 @@
 // stylesheet can leak in or out, and stays usable whether it is mounted over
 // the real client or on the standalone demo page.
 
+import { markdownMarkup, plainText } from './markdown.js';
 import { NODE_META, formatTime, oneLine } from './timeline-core.js';
 
 // The panel draws exactly one kind of node — a conversation — so what a
@@ -117,11 +118,18 @@ const CSS = `
    is anchored to the right, and docked it sits right of the chat, so that edge
    is the divider between the two in either case. */
 .grip {
-  position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; z-index: 6;
+  /* Inside the panel's own edge, not straddling it: a parent with
+     overflow: hidden would clip anything that reaches into the chat, and in
+     the app the panel sits in exactly such a row. 12px is wide enough to hit
+     without aiming. */
+  position: absolute; left: 0; top: 0; bottom: 0; width: 12px; z-index: 6;
   cursor: col-resize; background: transparent; touch-action: none;
+  pointer-events: auto;
 }
+/* The edge line answers the pointer, so the wide hit area is not invisible:
+   the dock's own border is the resting state. */
 .grip::after {
-  content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
   background: transparent; transition: background .12s ease;
 }
 .grip:hover::after, .grip:focus-visible::after, .dock.resizing .grip::after { background: var(--tl-accent); }
@@ -272,12 +280,35 @@ const CSS = `
 .detail .when { margin-left: auto; color: var(--tl-fg-faint); white-space: nowrap; font-size: var(--text-2xs, 11px); font-variant-numeric: tabular-nums; }
 .chip { font-size: var(--text-2xs, 11px); padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; flex: 0 0 auto; }
 .msg { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--tl-fg); }
-.msg.quote { border-left: 2px solid var(--tl-accent); padding-left: 9px; color: var(--tl-code-fg); }
+
+/* The reply is model output and usually Markdown; it is rendered rather than
+   shown as source, so bold markers and hash headings read as what they mean. */
+.msg.md { white-space: normal; line-height: 1.62; }
+.md-p { margin: 0 0 8px; }
+.md-p:last-child { margin-bottom: 0; }
+.md-h { margin: 12px 0 6px; font-weight: 600; color: var(--tl-strong); }
+.md-h:first-child { margin-top: 0; }
+.md-h1 { font-size: 15px; }
+.md-h2 { font-size: 14px; }
+.md-h3 { font-size: 13px; }
+.md-list { margin: 0 0 8px; padding-left: 18px; }
+.md-list li { margin: 2px 0; }
+.md-table { margin: 0 0 8px; border-collapse: collapse; font-size: var(--text-xs, 12px); display: block; overflow-x: auto; }
+.md-table th, .md-table td { padding: 3px 8px; border-bottom: 1px solid var(--tl-line); text-align: left; vertical-align: top; white-space: nowrap; }
+.md-table th { color: var(--tl-strong); font-weight: 600; border-bottom-color: var(--tl-fg-faint); }
+.md-quote { margin: 0 0 8px; padding-left: 9px; border-left: 2px solid var(--tl-line); color: var(--tl-fg-dim); }
+.md-rule { height: 1px; margin: 10px 0; background: var(--tl-line); }
+.md-link { color: var(--tl-accent); text-decoration: underline; text-underline-offset: 2px; }
+.md-ic, .md-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: .92em; background: var(--tl-code-bg); color: var(--tl-code-fg);
+}
+.md-ic { padding: 1px 4px; border-radius: 4px; }
+.md-code { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; overflow: auto; max-height: 260px; white-space: pre; }
+.msg.md strong { color: var(--tl-strong); font-weight: 600; }
 /* The two halves of a conversation in the detail pane: what was asked, then
    what came of it. A label over the message rather than a box around it — the
    reply is prose, not a diff. */
-.iohead { margin: 9px 0 4px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
-.iohead:first-child { margin-top: 0; }
 .msg.none { color: var(--tl-fg-faint); }
 .outcome { margin-top: 6px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
 
@@ -472,31 +503,37 @@ export class TimelinePanel {
     };
 
     let origin = null;
-    grip.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || this.collapsed) return;
-      e.preventDefault();
-      origin = { x: e.clientX, width: this.dock.getBoundingClientRect().width };
-      this.dock.classList.add('resizing');
-      // Not every pointer can be captured (a synthetic or already-released
-      // one throws); the drag still works, it just stops at the panel's edge.
-      try {
-        grip.setPointerCapture(e.pointerId);
-      } catch {
-        /* no capture available */
-      }
-    });
-    grip.addEventListener('pointermove', (e) => {
-      if (!origin) return;
-      set(origin.width - (e.clientX - origin.x));
-    });
+    const follow = (e) => {
+      if (origin) set(origin.width - (e.clientX - origin.x));
+    };
     const end = () => {
       if (!origin) return;
       origin = null;
       this.dock.classList.remove('resizing');
       if (this.width) saveWidth(this.width);
+      window.removeEventListener('pointermove', follow);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
     };
-    grip.addEventListener('pointerup', end);
-    grip.addEventListener('pointercancel', end);
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || this.collapsed) return;
+      // The pointer belongs to the drag now; the app must not also act on it.
+      e.preventDefault();
+      e.stopPropagation();
+      origin = { x: e.clientX, width: this.dock.getBoundingClientRect().width };
+      this.dock.classList.add('resizing');
+      // Not every pointer can be captured (a synthetic or already-released one
+      // throws). The window listeners below are what actually keep the drag
+      // tracking, so capture is only a shortcut.
+      try {
+        grip.setPointerCapture(e.pointerId);
+      } catch {
+        /* no capture available */
+      }
+      window.addEventListener('pointermove', follow);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+    });
     grip.addEventListener('lostpointercapture', end);
     // No pointer at hand: the arrows do the same thing, and a double click
     // gives the width back to the layout.
@@ -790,7 +827,7 @@ export class TimelinePanel {
     }
     const head = `<div class="dhead">
         <span class="chip" style="color:${accentOf(node)}">${CONV.glyph} 第 ${node.index} 次对话</span>
-        <span class="name" title="${esc(node.text)}">${esc(node.summary)}</span>
+        <span class="name" title="${esc(plainText(node.text))}">${esc(plainText(node.summary))}</span>
         <span class="when">${esc(formatTime(node.startedAt))}</span>
       </div>`;
 
@@ -824,7 +861,7 @@ export class TimelinePanel {
           `<div class="txt">` +
           `<div class="lead">` +
           `<span style="color:${accentOf(node)}">${CONV.glyph}</span>` +
-          `<span class="sum">${esc(node.summary)}</span>` +
+          `<span class="sum">${esc(plainText(node.summary))}</span>` +
           `<span class="time">${esc(formatTime(node.startedAt))}</span>` +
           `</div>` +
           replyLine(node) +
@@ -856,7 +893,7 @@ function accentOf(node) {
 /** The second line of a row: what the agent finally said, in one line. */
 function replyLine(node) {
   if (node.reply) {
-    return `<div class="rep"><span class="mark">▸</span><span>${esc(oneLine(node.reply, 110))}</span></div>`;
+    return `<div class="rep"><span class="mark">▸</span><span>${esc(oneLine(plainText(node.reply), 110))}</span></div>`;
   }
   // `▸` says there was a reply, `■` that there never will be one, `…` that this
   // one is still coming.
@@ -889,24 +926,26 @@ function tail(node) {
 }
 
 /** The body of the detail pane: what was asked, and what came of it. */
+/**
+ * What the reply pane shows: the agent's answer, rendered.
+ *
+ * The question is already in the header line above it, and repeating it — let
+ * alone the questions and answers of other conversations — only pushes the
+ * thing being read off the screen. So the body is the reply and nothing else;
+ * an unanswered conversation shows why, because that is its reply.
+ */
 function conversationBody(node) {
-  const asked = `<div class="iohead">你</div><div class="msg quote">${esc(node.text || '（空消息）')}</div>`;
   if (!node.reply) {
-    // Still being worked on says itself and needs no label over it; nothing at
-    // all needs the label, because the reason is what the line is.
     return node.busy
-      ? asked + '<div class="msg none">正在回复…</div>'
-      : asked + `<div class="iohead">回复</div><div class="msg none">${esc(whyUnanswered(node))}</div>`;
+      ? '<div class="msg none">正在回复…</div>'
+      : `<div class="msg none">${esc(whyUnanswered(node))}</div>`;
   }
-  // The label is the *kind* of last word it was: a turn can end on a question or
-  // an ask for a key rather than on an answer.
-  const kind = NODE_META[node.replyKind]?.label ?? '回复';
   // A turn that failed often has the failure as its last *message* as well as an
   // error item after it, and printing the same sentence twice reads as two
   // things going wrong.
   const said = node.stopText && !node.reply.includes(node.stopText) ? tail(node) : '';
   const after = node.stop ? `<div class="outcome">这之后${node.stop === 'error' ? '出错' : '被打断'}${said}</div>` : '';
-  return asked + `<div class="iohead">${esc(kind)}</div><div class="msg">${esc(node.reply)}</div>` + after;
+  return `<div class="msg md">${markdownMarkup(node.reply)}</div>${after}`;
 }
 
 function emptyRow() {
