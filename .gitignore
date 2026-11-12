@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Built by scripts/patch-desktop.mjs (esbuild output), not checked in
+build/

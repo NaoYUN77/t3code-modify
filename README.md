@@ -223,6 +223,24 @@ what it does and the two ways to turn it off.
 
 Note: `t3 update` replaces the client, so re-run `node install.mjs` afterwards.
 
+### The desktop app (Electron)
+
+The desktop app does not load the client the server serves: it renders its own
+bundle out of `resources/app.asar` and talks to the server over WebSocket, so
+`install.mjs` does nothing for it. Patch the bundle instead:
+
+```sh
+node scripts/patch-desktop.mjs --probe      # report only, changes nothing
+node scripts/patch-desktop.mjs --patch      # back up the asar, inject, repack
+node scripts/patch-desktop.mjs --uninstall  # put the original asar back
+```
+
+Quit the app before patching. The injection is one inline classic `<script>`
+built from `src/` with esbuild, because a renderer loaded over `file://` cannot
+import ES modules; the original is kept as `app.asar.t3bak`. If the probe cannot
+find the install, name it with `--app-dir "C:\path\to\T3Code"` or
+`--asar "C:\path\to\resources\app.asar"`.
+
 ### On Windows
 
 Nothing in the panel is platform-specific — it is browser-side script plus one
