@@ -1,23 +1,36 @@
 #!/usr/bin/env node
 // Patch the T3 Code *desktop app* (Electron), not the server's client.
 //
-// The desktop app renders a client bundle out of its own `resources/app.asar`;
-// it only talks to the server over WebSocket, so `install.mjs` (which patches
-// the client the server serves) does nothing for it. This script goes into the
-// app's asar instead.
+// The desktop app renders its own client out of a bundle it installs beside
+// itself. What that bundle is depends on the build:
+//
+//   resources/app.asar     the Electron shell (main process + node_modules)
+//   resources/server.asar  the T3 server *and* the client it serves, at
+//                          apps/server/dist/client/  <- this is the target
+//
+// The renderer does not fetch the client from the server it is connected to
+// (the server sees only /ws and /api), so `install.mjs` — which patches the
+// client the server serves — leaves it untouched. This script goes into the
+// asar that actually holds a client:
 //
 //   node scripts/patch-desktop.mjs --probe       # report only, changes nothing
 //   node scripts/patch-desktop.mjs --patch       # extract, inject, repack
 //   node scripts/patch-desktop.mjs --uninstall   # restore the backup
 //
-// The injection is one inline classic <script> (built from src/ into a single
-// IIFE, because the renderer may load over file:// where ES module imports are
-// blocked) placed just before </body> of the client's index.html. It carries a
-// marker comment so --uninstall can take it back out, and the original
-// app.asar is kept as app.asar.t3bak.
+// Two scripts are injected:
 //
-// This is a modification of an installed application: quit the app first, and
-// if it no longer starts, --uninstall puts the original asar back.
+//   1. a prelude at the top of <head>, before the app's own code. It wraps
+//      fetch and WebSocket and records the address, ticket route and auth
+//      headers the app uses to reach its server. The app authenticates with a
+//      bearer token, not the web client's cookie, and the renderer may be
+//      loaded over file:// where a relative URL means nothing — this is how
+//      the panel learns where "the server" is.
+//   2. the panel itself, one inline classic <script> built from src/ into a
+//      single IIFE (a file:// renderer cannot import ES modules), before
+//      </body>.
+//
+// The original asar is kept as <name>.asar.t3bak; --uninstall puts it back.
+// Quit the app before patching.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,7 +42,8 @@ const SRC = path.join(ROOT, 'src');
 const BUILD = path.join(ROOT, 'build', 't3-timeline.iife.js');
 const MARK = '<!-- t3-timeline:panel -->';
 const MARK_END = '<!-- /t3-timeline:panel -->';
-const BACKUP = 'app.asar.t3bak';
+const PRE = '<!-- t3-timeline:prelude -->';
+const PRE_END = '<!-- /t3-timeline:prelude -->';
 const ASAR_VERSION = '@electron/asar@3';
 const FUSES_VERSION = '@electron/fuses@1';
 
@@ -44,10 +58,6 @@ const die = (msg) => {
   console.error(`error: ${msg}`);
   process.exit(1);
 };
-
-function npx(spec, args, opts = {}) {
-  return run('npx', ['--yes', spec, ...args], opts);
-}
 
 /** npx and friends are .cmd shims on Windows, which execFile cannot launch
  *  directly — and a path with spaces (Program Files\\T3 Code) must survive the
@@ -65,28 +75,24 @@ function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, options);
 }
 
-// --- find the app ----------------------------------------------------------
+const npx = (spec, args, opts = {}) => run('npx', ['--yes', spec, ...args], opts);
+
+// --- find the app and the asar that holds a client -------------------------
 
 const looksLikeT3 = (s) => /t3[\s._-]?code|t3code/i.test(s);
 
-function candidates() {
+function appDirs() {
   const out = [];
   const add = (dir) => {
-    if (!dir) return;
-    const resources = path.join(dir, 'resources');
-    const asar = path.join(resources, 'app.asar');
-    if (fs.existsSync(asar)) out.push({ appDir: dir, resources, asar });
+    if (dir && fs.existsSync(path.join(dir, 'resources'))) out.push(dir);
   };
 
   if (process.platform === 'win32') {
     const roots = [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)']]
       .filter(Boolean);
     for (const root of roots) {
-      // %LOCALAPPDATA%\Programs\<app>\resources\app.asar is the usual place,
-      // but check the root itself too for per-machine installs.
       add(root);
-      const programs = path.join(root, 'Programs');
-      for (const base of [programs, root]) {
+      for (const base of [path.join(root, 'Programs'), root]) {
         let entries = [];
         try {
           entries = fs.readdirSync(base, { withFileTypes: true });
@@ -105,8 +111,7 @@ function candidates() {
       add(path.join('/Applications', dir, 'Contents'));
     }
   } else {
-    const roots = ['/opt', path.join(os.homedir(), '.local', 'share')];
-    for (const root of roots) {
+    for (const root of ['/opt', path.join(os.homedir(), '.local', 'share')]) {
       let entries = [];
       try {
         entries = fs.readdirSync(root, { withFileTypes: true });
@@ -122,36 +127,67 @@ function candidates() {
   return out;
 }
 
-function locate() {
-  const direct = opt('--asar');
-  if (direct) {
-    const asar = path.resolve(direct);
-    if (!fs.existsSync(asar)) die(`no such file: ${asar}`);
-    return { appDir: path.dirname(path.dirname(asar)), resources: path.dirname(asar), asar };
+/** `asar list` reads only the header, so this is cheap even for 200 MB. */
+function asarHasClient(asar) {
+  try {
+    const out = run('npx', ['--yes', ASAR_VERSION, 'list', asar]);
+    return /(^|[\\/])client[\\/]index\.html$/im.test(out);
+  } catch {
+    return false;
   }
-  const found = candidates();
+}
+
+function chooseAsar(resources) {
+  const explicit = opt('--asar');
+  if (explicit) {
+    const asar = path.resolve(explicit);
+    if (!fs.existsSync(asar)) die(`no such file: ${asar}`);
+    return asar;
+  }
+  let names = [];
+  try {
+    names = fs.readdirSync(resources).filter((f) => f.endsWith('.asar'));
+  } catch {
+    die(`cannot read ${resources}`);
+  }
+  // server.asar first: in the desktop builds seen so far the shell's app.asar
+  // has no HTML at all, and checking 200 MB of listing before 20 MB only costs
+  // a moment anyway.
+  names.sort((a, b) => (b === 'server.asar') - (a === 'server.asar'));
+  for (const name of names) {
+    const full = path.join(resources, name);
+    if (asarHasClient(full)) return full;
+  }
+  die(
+    `none of ${names.join(', ')} contains a client/index.html.\n` +
+      'Pass --asar <path> to name the archive yourself, and --app-dir <folder> if the app ' +
+      'itself was not found.',
+  );
+}
+
+function locate() {
   const explicit = opt('--app-dir');
   if (explicit) {
     const appDir = path.resolve(explicit);
-    const asar = path.join(appDir, 'resources', 'app.asar');
-    if (!fs.existsSync(asar)) die(`no resources/app.asar under ${appDir}`);
-    return { appDir, resources: path.join(appDir, 'resources'), asar };
+    const resources = path.join(appDir, 'resources');
+    if (!fs.existsSync(resources)) die(`no resources folder under ${appDir}`);
+    return { appDir, resources, asar: chooseAsar(resources) };
   }
+  const found = appDirs();
   if (!found.length) {
     die(
-      'could not find a T3 Code desktop install (no resources/app.asar with "t3" in the path).\n' +
-        'Point at it with --app-dir "C:\\path\\to\\T3Code" (the folder holding resources\\), ' +
-        'or --asar "C:\\path\\to\\resources\\app.asar".',
+      'could not find a T3 Code desktop install (no folder named like it with a resources/ inside).\n' +
+        'Point at it with --app-dir "C:\\path\\to\\t3code" (the folder holding resources\\).',
     );
   }
-  return found[0];
+  const appDir = found[0];
+  const resources = path.join(appDir, 'resources');
+  return { appDir, resources, asar: chooseAsar(resources) };
 }
 
 // --- asar helpers ----------------------------------------------------------
 
-function extract(asar, dest) {
-  npx(ASAR_VERSION, ['extract', asar, dest], { stdio: ['ignore', 'pipe', 'inherit'] });
-}
+const extract = (asar, dest) => npx(ASAR_VERSION, ['extract', asar, dest], { stdio: ['ignore', 'pipe', 'inherit'] });
 
 function pack(dir, out, unpackDirs) {
   const args = ['pack', dir, out];
@@ -159,15 +195,15 @@ function pack(dir, out, unpackDirs) {
   npx(ASAR_VERSION, args, { stdio: ['ignore', 'pipe', 'inherit'] });
 }
 
-/** Top-level entries of app.asar.unpacked, to keep native modules unpacked. */
-function unpackedTopLevel(resources) {
-  const dir = path.join(resources, 'app.asar.unpacked');
+/** Top-level entries of <asar>.unpacked, so native modules stay unpacked. */
+function unpackedTopLevel(asar) {
+  const dir = `${asar}.unpacked`;
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
 }
 
 function walk(dir, visit, depth = 0) {
-  if (depth > 8) return;
+  if (depth > 10) return;
   let entries = [];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -182,39 +218,46 @@ function walk(dir, visit, depth = 0) {
   }
 }
 
-/** The index.html the renderer loads: the one with a root element and the most
- *  script tags — a bundled app can carry examples or docs HTML too. */
+/** The index.html the renderer loads: a #root element, the most scripts, and
+ *  preferably one under a client/ directory (a bundle can carry docs HTML too). */
 function findIndexHtml(dir) {
   const hits = [];
   walk(dir, (p) => {
     if (!/\.html?$/i.test(p)) return;
     let html;
     try {
+      const st = fs.statSync(p);
+      if (st.size > 2_000_000) return;
       html = fs.readFileSync(p, 'utf8');
     } catch {
       return;
     }
-    if (html.length > 2_000_000) return;
     const scripts = (html.match(/<script\b/gi) || []).length;
     const root = /id=["']root["']/.test(html);
     if (!root && !scripts) return;
-    hits.push({ file: p, rel: path.relative(dir, p), scripts, root, size: html.length, html });
+    hits.push({
+      file: p,
+      rel: path.relative(dir, p),
+      scripts,
+      root,
+      inClient: /[\\/]client[\\/]/.test(p),
+      size: html.length,
+      html,
+    });
   });
-  hits.sort((a, b) => Number(b.root) - Number(a.root) || b.scripts - a.scripts);
+  hits.sort((a, b) => Number(b.inClient) - Number(a.inClient) || Number(b.root) - Number(a.root) || b.scripts - a.scripts);
   return hits;
 }
 
-/** How much of the DOM the desktop bundle is expected to have. If these are
- *  zero, the app's client has moved on and the injected script will no-op. */
+/** How much of the DOM the panel relies on is still in the app's bundle. */
 const ANCHORS = [
   'sidebar-content',
   'data-sidebar-row',
   'sidebar-inset',
   'sidebar-group',
   'thread',
-  // How the app talks to the server: if the renderer itself opens the socket,
-  // the injected panel can reuse the same origin; if these are absent, the
-  // socket lives in the main process and the panel needs the app's bridge.
+  // The transport: if these are missing, the renderer does not talk HTTP/WS
+  // itself and the prelude's capture will find nothing.
   'websocket-ticket',
   'wsTicket',
   'orchestrationProtocol',
@@ -227,8 +270,7 @@ function anchorReport(extracted) {
     if (!/\.(m?js|cjs)$/i.test(p)) return;
     let text;
     try {
-      const st = fs.statSync(p);
-      if (st.size > 30_000_000) return;
+      if (fs.statSync(p).size > 30_000_000) return;
       text = fs.readFileSync(p, 'latin1');
     } catch {
       return;
@@ -252,7 +294,7 @@ function extractToTemp(asar) {
   return dir;
 }
 
-// --- bundle ----------------------------------------------------------------
+// --- injection -------------------------------------------------------------
 
 function ensureBundle() {
   if (!fs.existsSync(BUILD) || flag('--rebuild')) {
@@ -270,30 +312,97 @@ function ensureBundle() {
   return code;
 }
 
-function scriptBlock(code) {
-  return `${MARK}<script>${code}</script>${MARK_END}`;
+/** Runs before the app's own scripts: records how the app reaches its server. */
+function prelude() {
+  const serverUrl = opt('--server-url');
+  const config = serverUrl
+    ? `window.__t3panelConfig = { serverUrl: ${JSON.stringify(serverUrl)} };\n`
+    : '';
+  return `(() => {
+  ${config}const net = (window.__t3panelNet = window.__t3panelNet || {});
+  const abs = (u) => { try { return new URL(String(u), location.href); } catch { return null; } };
+  const norm = (h) => {
+    if (!h) return null;
+    try {
+      if (typeof Headers !== 'undefined' && h instanceof Headers) {
+        const o = {}; h.forEach((v, k) => { o[k] = v; }); return o;
+      }
+      if (Array.isArray(h)) { const o = {}; for (const [k, v] of h) o[k] = v; return o; }
+      if (typeof h === 'object') return { ...h };
+    } catch {}
+    return null;
+  };
+  const fetch0 = window.fetch;
+  if (fetch0) window.fetch = function (input, init) {
+    try {
+      const url = typeof input === 'string' ? input : (input && input.url);
+      const u = url ? abs(url) : null;
+      if (u && (u.protocol === 'http:' || u.protocol === 'https:')) {
+        net.base = net.base || u.origin;
+        if (u.pathname.indexOf('/api/auth/websocket-ticket') === 0) {
+          net.ticket = u.href;
+          net.headers = norm(init && init.headers) || norm(input && input.headers) || net.headers;
+        }
+      }
+    } catch {}
+    return fetch0.apply(this, arguments);
+  };
+  // The desktop renderer's address does not change when the user switches
+  // thread (it is a fixed file:// page), so the current thread is read off the
+  // app's own RPC frames instead: every subscribeThread request names one.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const noteFrame = (data) => {
+    if (typeof data !== 'string' || data.length > 500000) return;
+    let frame;
+    try { frame = JSON.parse(data); } catch { return; }
+    for (const item of Array.isArray(frame) ? frame : [frame]) {
+      const id = item && item.payload && item.payload.threadId;
+      if (typeof id === 'string' && UUID.test(id)) net.threadId = id;
+    }
+  };
+  const W = window.WebSocket;
+  if (W) {
+    function W2(url, protocols) {
+      const ws = protocols === undefined ? new W(url) : new W(url, protocols);
+      try {
+        net.ws = String(url);
+        const send0 = ws.send;
+        ws.send = function (data) { try { noteFrame(String(data)); } catch {} return send0.apply(this, arguments); };
+      } catch {}
+      return ws;
+    }
+    W2.prototype = W.prototype;
+    for (const k of ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']) { try { W2[k] = W[k]; } catch {} }
+    window.WebSocket = W2;
+  }
+})();`;
 }
 
-function stripBlock(html) {
-  const a = html.indexOf(MARK);
-  if (a === -1) return { html, removed: false };
-  const b = html.indexOf(MARK_END, a);
-  if (b === -1) return { html, removed: false };
-  return { html: html.slice(0, a) + html.slice(b + MARK_END.length), removed: true };
+const preludeBlock = () => `${PRE}<script>${prelude()}</script>${PRE_END}`;
+const panelBlock = (code) => `${MARK}<script>${code}</script>${MARK_END}`;
+
+function stripBlock(html, start, end) {
+  const a = html.indexOf(start);
+  if (a === -1) return html;
+  const b = html.indexOf(end, a);
+  if (b === -1) return html;
+  return html.slice(0, a) + html.slice(b + end.length);
 }
+
+const stripBlocks = (html) => stripBlock(stripBlock(html, MARK, MARK_END), PRE, PRE_END);
 
 // --- commands --------------------------------------------------------------
 
 function probe() {
   const app = locate();
   say(`app:      ${app.appDir}`);
-  say(`asar:     ${app.asar} (${(fs.statSync(app.asar).size / 1e6).toFixed(1)} MB)`);
-  const unpacked = unpackedTopLevel(app.resources);
+  say(`asar:     ${app.asar} (${(fs.statSync(app.asar).size / 1e6).toFixed(1)} MB) — has client/index.html`);
+  const unpacked = unpackedTopLevel(app.asar);
   say(`unpacked: ${unpacked.length ? unpacked.join(', ') : '(none)'}`);
 
   try {
     const exe = process.platform === 'win32'
-      ? ['.exe'].map((ext) => fs.readdirSync(app.appDir).find((f) => f.toLowerCase().endsWith(ext))).find(Boolean)
+      ? fs.readdirSync(app.appDir).find((f) => f.toLowerCase().endsWith('.exe'))
       : null;
     const target = exe ? path.join(app.appDir, exe) : app.appDir;
     const out = npx(FUSES_VERSION, ['read', '--app', target]);
@@ -306,7 +415,7 @@ function probe() {
   const tmp = extractToTemp(app.asar);
   const hits = findIndexHtml(tmp);
   if (!hits.length) die('no client index.html found inside the asar');
-  say(`\nindex.html candidates (best first):`);
+  say('\nindex.html candidates (best first):');
   for (const h of hits.slice(0, 5)) {
     const csp = /http-equiv=["']Content-Security-Policy["']/i.test(h.html);
     say(`  ${h.rel}  (${h.size} bytes, ${h.scripts} scripts, root=${h.root}, csp=${csp}, patched=${h.html.includes(MARK)})`);
@@ -326,10 +435,11 @@ function probe() {
 function patch() {
   const app = locate();
   const code = ensureBundle();
+  const backup = `${app.asar}.t3bak`;
 
-  if (fs.existsSync(path.join(app.resources, BACKUP)) && !flag('--force')) {
+  if (fs.existsSync(backup) && !flag('--force')) {
     die(
-      `a backup already exists: ${BACKUP} — this app has been patched before.\n` +
+      `a backup already exists: ${backup} — this app has been patched before.\n` +
         'Run --uninstall first, or --patch --force to overwrite the backup with the current asar.',
     );
   }
@@ -338,20 +448,20 @@ function patch() {
   const hits = findIndexHtml(tmp);
   if (!hits.length) die('no client index.html found inside the asar');
   const best = hits[0];
-  if (!best.root) say(`warning: ${best.rel} has no #root element — check that this is the right page`);
 
-  const { html: cleaned } = stripBlock(best.html);
-  if (!cleaned.includes('</body>')) die(`${best.rel} has no </body>`);
-  const patched = cleaned.replace('</body>', `  ${scriptBlock(code)}\n  </body>`);
-  fs.writeFileSync(best.file, patched);
-  say(`patched ${best.rel} (+${(patched.length - best.html.length) / 1024 | 0} KB inline script)`);
+  let html = stripBlocks(best.html);
+  if (!/<head[^>]*>/i.test(html)) die(`${best.rel} has no <head>`);
+  if (!html.includes('</body>')) die(`${best.rel} has no </body>`);
+  html = html.replace(/<head([^>]*)>/i, `<head$1>${preludeBlock()}`);
+  html = html.replace('</body>', `  ${panelBlock(code)}\n  </body>`);
+  fs.writeFileSync(best.file, html);
+  say(`patched ${best.rel} (+${((html.length - best.html.length) / 1024) | 0} KB)`);
 
-  const out = path.join(os.tmpdir(), `app.patched.${Date.now()}.asar`);
-  pack(tmp, out, unpackedTopLevel(app.resources));
+  const out = path.join(os.tmpdir(), `patched.${Date.now()}.asar`);
+  pack(tmp, out, unpackedTopLevel(app.asar));
 
-  // Keep the original once; swapping only after the pack succeeded means a
-  // failed pack leaves the app untouched.
-  const backup = path.join(app.resources, BACKUP);
+  // Keep the original once; swap only after the pack succeeded, so a failed
+  // pack leaves the app untouched.
   if (!fs.existsSync(backup) || flag('--force')) fs.copyFileSync(app.asar, backup);
   try {
     fs.copyFileSync(out, app.asar);
@@ -368,7 +478,7 @@ function patch() {
 
 function uninstall() {
   const app = locate();
-  const backup = path.join(app.resources, BACKUP);
+  const backup = `${app.asar}.t3bak`;
   if (fs.existsSync(backup)) {
     try {
       fs.copyFileSync(backup, app.asar);
@@ -381,16 +491,15 @@ function uninstall() {
   }
   const tmp = extractToTemp(app.asar);
   const hits = findIndexHtml(tmp);
-  const hit = hits.find((h) => h.html.includes(MARK));
+  const hit = hits.find((h) => h.html.includes(MARK) || h.html.includes(PRE));
   if (!hit) {
     say('no marker found — nothing to remove');
     fs.rmSync(tmp, { recursive: true, force: true });
     return;
   }
-  const { html, removed } = stripBlock(hit.html);
-  fs.writeFileSync(hit.file, html);
-  const out = path.join(os.tmpdir(), `app.clean.${Date.now()}.asar`);
-  pack(tmp, out, unpackedTopLevel(app.resources));
+  fs.writeFileSync(hit.file, stripBlocks(hit.html));
+  const out = path.join(os.tmpdir(), `clean.${Date.now()}.asar`);
+  pack(tmp, out, unpackedTopLevel(app.asar));
   try {
     fs.copyFileSync(out, app.asar);
   } catch (e) {
@@ -398,7 +507,7 @@ function uninstall() {
   }
   fs.rmSync(out, { force: true });
   fs.rmSync(tmp, { recursive: true, force: true });
-  say(`removed the injected script (${removed})`);
+  say('removed the injected scripts');
 }
 
 try {

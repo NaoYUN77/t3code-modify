@@ -217,8 +217,29 @@ export class Integration {
     this.#placeButton();
   }
 
+  /**
+   * Fall back to floating over the app.
+   *
+   * The dock depends on the client's own layout row; a build that renders the
+   * thread page differently (the desktop app is a different client version)
+   * never provides one, and waiting forever would leave the panel hidden. The
+   * floating style is the panel's own (`position: fixed`, right edge), so this
+   * only decides where the host hangs — no app markup is touched.
+   */
+  #float() {
+    const host = this.panel.host;
+    if (host.parentElement !== document.body) document.body.append(host);
+    this.panel.setDocked(false);
+    this.panel.setVisible(this.panel.open);
+  }
+
   #placePanel() {
     const layout = layoutRow();
+    if (!layout && this.tries >= 20) {
+      // ~5 s without a layout row: float rather than stay invisible.
+      this.#float();
+      return;
+    }
     if (!layout) {
       // The client renders the thread page asynchronously, and a page that has
       // already settled produces no more mutations to wake the observer — so

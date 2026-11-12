@@ -226,8 +226,10 @@ Note: `t3 update` replaces the client, so re-run `node install.mjs` afterwards.
 ### The desktop app (Electron)
 
 The desktop app does not load the client the server serves: it renders its own
-bundle out of `resources/app.asar` and talks to the server over WebSocket, so
-`install.mjs` does nothing for it. Patch the bundle instead:
+bundle and talks to the server over WebSocket, so `install.mjs` does nothing for
+it. In the builds seen so far `resources/app.asar` is only the Electron shell;
+the client is inside `resources/server.asar`, at `apps/server/dist/client/`. The
+script finds whichever asar actually holds a `client/index.html`:
 
 ```sh
 node scripts/patch-desktop.mjs --probe      # report only, changes nothing
@@ -235,11 +237,21 @@ node scripts/patch-desktop.mjs --patch      # back up the asar, inject, repack
 node scripts/patch-desktop.mjs --uninstall  # put the original asar back
 ```
 
-Quit the app before patching. The injection is one inline classic `<script>`
-built from `src/` with esbuild, because a renderer loaded over `file://` cannot
-import ES modules; the original is kept as `app.asar.t3bak`. If the probe cannot
-find the install, name it with `--app-dir "C:\path\to\T3Code"` or
-`--asar "C:\path\to\resources\app.asar"`.
+Quit the app before patching. Two scripts are injected, both inline classic
+`<script>`s built from `src/` with esbuild (a renderer loaded over `file://`
+cannot import ES modules):
+
+- a **prelude** at the top of `<head>`, before the app's own code. It wraps
+  `fetch` and `WebSocket` and records the server address, ticket route and auth
+  headers the app itself uses, plus the thread id from the app's RPC frames —
+  the desktop renderer's URL never changes when the user switches thread, so the
+  route cannot be read the way it is in the web client.
+- the **panel**, before `</body>`.
+
+The original is kept as `<name>.asar.t3bak`. If the probe cannot find the
+install, name it with `--app-dir "C:\path\to\t3code"`; if the app's requests do
+not go through `window.fetch`, pass `--server-url http://host:port` and the
+prelude carries that address instead.
 
 ### On Windows
 
