@@ -56,8 +56,20 @@ function threadIdFromLocation() {
 async function resolveTransport() {
   const net = window.__t3panelNet;
   const cfg = window.__t3panelConfig || {};
-  const fallback = () =>
-    cfg.serverUrl ? { base: String(cfg.serverUrl).replace(/\/$/, ''), headers: cfg.headers || {} } : undefined;
+  const fallback = () => {
+    if (cfg.serverUrl) return { base: String(cfg.serverUrl).replace(/\/$/, ''), headers: cfg.headers || {} };
+    // The prelude also records the app's own socket, and its URL names the
+    // server even when the ticket request could not be seen: same server, a
+    // relative fetch would otherwise hit the page's own origin instead.
+    if (net?.ws) {
+      try {
+        return { base: new URL(net.ws).origin };
+      } catch {
+        /* fall through */
+      }
+    }
+    return undefined;
+  };
   if (!net) return fallback();
 
   const captured = () => {
@@ -69,9 +81,11 @@ async function resolveTransport() {
       return null;
     }
   };
-  // About 30 s: the app asks for a ticket when its socket (re)connects, which is
-  // at startup and on every reconnect.
-  for (let i = 0; i < 120; i += 1) {
+  // About 30 s when nothing has been seen yet — the app asks for a ticket at
+  // startup and on every reconnect. If its socket is already known, the app is
+  // plainly not using window.fetch for that request, so do not wait for it.
+  const waits = net.ws ? 8 : 120;
+  for (let i = 0; i < waits; i += 1) {
     const t = captured();
     if (t) return t;
     await new Promise((r) => setTimeout(r, 250));
@@ -196,9 +210,13 @@ export async function boot() {
           .filter((k) => /t3|electron|bridge|native|ipc/i.test(k))
           .slice(0, 12)
           .join(', ');
+        const env = net.env ? `${net.env.protocol}//${net.env.host}` : '未知';
         panel.setEmptyNote(
-          `连接失败：${e.message}\n捕获：base ${net.base || '无'} · ticket ${net.ticket ? '有' : '无'} · ` +
+          `连接失败：${e.message}\n` +
+            `捕获：base ${net.base || '无'} · ticket ${net.ticket ? '有' : '无'} · ` +
             `headers ${net.headers ? '有' : '无'} · thread ${net.threadId ? net.threadId.slice(0, 8) : '无'}\n` +
+            `页面：${env} · socket ${net.ws ? '有' : '无'}\n` +
+            `bridge：${net.bridge ? net.bridge.join(', ') : '无'}\n` +
             `全局：${globals || '无'}`,
         );
       }
