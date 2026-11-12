@@ -189,17 +189,49 @@ function locate() {
 
 const extract = (asar, dest) => npx(ASAR_VERSION, ['extract', asar, dest], { stdio: ['ignore', 'pipe', 'inherit'] });
 
-function pack(dir, out, unpackDirs) {
+function pack(dir, out, unpackPatterns) {
   const args = ['pack', dir, out];
-  for (const d of unpackDirs) args.push('--unpack-dir', d);
+  for (const p of unpackPatterns) args.push('--unpack', p);
   npx(ASAR_VERSION, args, { stdio: ['ignore', 'pipe', 'inherit'] });
 }
 
-/** Top-level entries of <asar>.unpacked, so native modules stay unpacked. */
-function unpackedTopLevel(asar) {
-  const dir = `${asar}.unpacked`;
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+/** The files the archive keeps outside itself (`<asar>.unpacked`), read from
+ *  its header. Re-packing without marking them unpacked would put native
+ *  modules inside the archive, where they cannot be loaded. */
+function unpackedEntries(asar) {
+  try {
+    const fd = fs.openSync(asar, 'r');
+    const head = Buffer.alloc(16);
+    fs.readSync(fd, head, 0, 16, 0);
+    const size = head.readUInt32LE(12);
+    const buf = Buffer.alloc(size);
+    fs.readSync(fd, buf, 0, size, 16);
+    fs.closeSync(fd);
+    const json = JSON.parse(buf.toString('utf8').replace(/\0+$/, ''));
+    const out = [];
+    const walk = (node, prefix) => {
+      for (const [name, v] of Object.entries(node.files || {})) {
+        const p = prefix ? `${prefix}/${name}` : name;
+        if (v.files) walk(v, p);
+        else if (v.unpacked) out.push(p);
+      }
+    };
+    walk(json, '');
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Copy a generated .unpacked tree into the app's own, keeping both usable. */
+function mergeDir(from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    const src = path.join(from, e.name);
+    const dst = path.join(to, e.name);
+    if (e.isDirectory()) mergeDir(src, dst);
+    else fs.copyFileSync(src, dst);
+  }
 }
 
 function walk(dir, visit, depth = 0) {
@@ -391,14 +423,42 @@ function stripBlock(html, start, end) {
 
 const stripBlocks = (html) => stripBlock(stripBlock(html, MARK, MARK_END), PRE, PRE_END);
 
+/**
+ * Pack `dir` and swap it in, carrying the archive's unpacked files with it.
+ *
+ * `asar pack` writes the files it leaves out to `<output>.unpacked`. Packing to
+ * a temp name elsewhere and copying only the archive orphans that directory —
+ * which is how a repack loses a native module ("Cannot find module
+ * '@ff-labs/fff-node'"). So the archive is packed beside its target, its
+ * unpacked files merged into the app's own, and only then copied into place.
+ */
+function swapIn(app, dir, { backup = true } = {}) {
+  const patterns = [...new Set(unpackedEntries(app.asar).map((p) => path.basename(p)))];
+  const out = path.join(app.resources, `.t3patch-${Date.now()}.asar`);
+  pack(dir, out, patterns);
+  const file = `${app.asar}.t3bak`;
+  if (backup && (!fs.existsSync(file) || flag('--force'))) fs.copyFileSync(app.asar, file);
+  try {
+    fs.copyFileSync(out, app.asar);
+  } catch (e) {
+    die(`could not replace ${app.asar} — is the app running? (${e.code || e.message})`);
+  }
+  if (fs.existsSync(`${out}.unpacked`)) {
+    mergeDir(`${out}.unpacked`, `${app.asar}.unpacked`);
+    fs.rmSync(`${out}.unpacked`, { recursive: true, force: true });
+  }
+  fs.rmSync(out, { force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 // --- commands --------------------------------------------------------------
 
 function probe() {
   const app = locate();
   say(`app:      ${app.appDir}`);
   say(`asar:     ${app.asar} (${(fs.statSync(app.asar).size / 1e6).toFixed(1)} MB) — has client/index.html`);
-  const unpacked = unpackedTopLevel(app.asar);
-  say(`unpacked: ${unpacked.length ? unpacked.join(', ') : '(none)'}`);
+  const unpacked = unpackedEntries(app.asar);
+  say(`unpacked: ${unpacked.length ? `${unpacked.length} file(s), e.g. ${unpacked.slice(0, 3).join(', ')}` : '(none)'}`);
 
   try {
     const exe = process.platform === 'win32'
@@ -457,19 +517,7 @@ function patch() {
   fs.writeFileSync(best.file, html);
   say(`patched ${best.rel} (+${((html.length - best.html.length) / 1024) | 0} KB)`);
 
-  const out = path.join(os.tmpdir(), `patched.${Date.now()}.asar`);
-  pack(tmp, out, unpackedTopLevel(app.asar));
-
-  // Keep the original once; swap only after the pack succeeded, so a failed
-  // pack leaves the app untouched.
-  if (!fs.existsSync(backup) || flag('--force')) fs.copyFileSync(app.asar, backup);
-  try {
-    fs.copyFileSync(out, app.asar);
-  } catch (e) {
-    die(`could not replace ${app.asar} — is the app running? (${e.code || e.message})`);
-  }
-  fs.rmSync(out, { force: true });
-  fs.rmSync(tmp, { recursive: true, force: true });
+  swapIn(app, tmp);
 
   say(`\nbackup:   ${backup}`);
   say('quit the app completely and start it again.');
@@ -498,15 +546,7 @@ function uninstall() {
     return;
   }
   fs.writeFileSync(hit.file, stripBlocks(hit.html));
-  const out = path.join(os.tmpdir(), `clean.${Date.now()}.asar`);
-  pack(tmp, out, unpackedTopLevel(app.asar));
-  try {
-    fs.copyFileSync(out, app.asar);
-  } catch (e) {
-    die(`could not replace ${app.asar} — is the app running? (${e.code || e.message})`);
-  }
-  fs.rmSync(out, { force: true });
-  fs.rmSync(tmp, { recursive: true, force: true });
+  swapIn(app, tmp, { backup: false });
   say('removed the injected scripts');
 }
 
