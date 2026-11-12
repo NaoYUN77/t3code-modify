@@ -126,13 +126,26 @@ const CSS = `
   cursor: col-resize; background: transparent; touch-action: none;
   pointer-events: auto;
 }
-/* The edge line answers the pointer, so the wide hit area is not invisible:
-   the dock's own border is the resting state. */
-.grip::after {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
-  background: transparent; transition: background .12s ease;
+/* T3 Code's own resize handle is a 1px divider that only appears on hover; it
+   is invisible at rest, which is why the edge did not look draggable. On top of
+   that, a small resting grip — the six dots the app's own GripVertical icon
+   draws — so the edge says what it does before the pointer gets there. */
+.grip::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px;
+  background: transparent; transition: background .15s ease;
 }
-.grip:hover::after, .grip:focus-visible::after, .dock.resizing .grip::after { background: var(--tl-accent); }
+.grip::after {
+  content: ""; position: absolute; left: 3px; top: 50%; width: 8px; height: 21px;
+  margin-top: -11px;
+  background-image: radial-gradient(currentColor 1.2px, transparent 1.4px);
+  background-size: 4px 7px; background-position: 1px 1px;
+  color: var(--tl-fg-dim); opacity: .8;
+  transition: opacity .15s ease, color .15s ease;
+}
+.grip:hover::before, .grip:focus-visible::before { background: var(--tl-line); }
+.grip:hover::after, .grip:focus-visible::after { opacity: 1; color: var(--tl-accent); }
+.dock.resizing .grip::before { background: color-mix(in srgb, var(--tl-accent) 60%, transparent); }
+.dock.resizing .grip::after { opacity: 1; color: var(--tl-accent); }
 .grip:focus-visible { outline: none; }
 .dock.collapsed .grip { display: none; }
 .dock.collapsed { width: 34px; }
