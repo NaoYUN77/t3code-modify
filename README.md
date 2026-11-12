@@ -24,12 +24,20 @@ that, so the panel draws the ends:
 | | |
 | --- | --- |
 | **the boundary** | a user message. It opens a conversation, and the next user message closes it. |
-| **the end** | the last thing the agent put in front of the user before that next message: an answer, a question, an ask for a key, an ask for permission. On this thread that is 135 answers, 5 asks for a key and 1 question — and 9 conversations that ended on nothing at all. The label over it says which kind of last word it was. |
+| **the end** | the last thing the agent put in front of the user before that next message: an answer, a question, an ask for a key, an ask for permission. On this thread that is 135 answers, 5 asks for a key and 1 question — and 9 conversations that ended on nothing at all. |
 | **what is folded away** | everything else: tool calls, commands, file changes and their diffs, plans, subagent transcripts, checkpoints, compactions. 3376 steps fold into those 150 conversations, and one conversation's middle runs to 360 of them. They are counted, not shown — nothing in the panel is a diff or a tool call any more. |
 
 What one conversation opens to, then its neighbours below it:
 
 ![a conversation open: what was asked, then what came of it](docs/conversation.png)
+
+**The body is the reply**, and it is rendered rather than shown as source. The
+panel understands the Markdown an agent usually writes — headings, lists,
+tables, inline code, fenced blocks, emphasis, and link labels (the panel shows
+the label and does not navigate) — with every character escaped first, because
+it is model output. The question is not repeated underneath: its opening line is
+the header above, and repeating it pushed the answer — the thing being read — off
+the screen.
 
 A conversation with nothing to show says which kind of nothing it is, and — unless
 it is simply still being worked on — takes the error colour on the track rather
