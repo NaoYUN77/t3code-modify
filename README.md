@@ -147,6 +147,15 @@ ours to get wrong: it arrives with the app's classes, inherits the control
 group's colours, and its pressed state is the same `aria-pressed` the app's own
 panel toggles use.
 
+**Type comes from the same place.** The panel names no face of its own: it reads
+`--font-sans` — Inter Variable where the app has it, Segoe UI on Windows — and
+its sizes are the app's `--text-sm` / `--text-xs` / `--text-2xs` (14 / 12 / 11px),
+with `font-variant-numeric: tabular-nums` on counts and timestamps the way the
+app sets it on its own. An earlier build set a monospace stack of its own, which
+is exactly the kind of near-miss that reads as a different application; the only
+reason to override it is a host that has none of these tokens, which is what
+`--t3-timeline-font` is for (the demo harness uses it).
+
 The demo harness is where this is exercised: it writes a theme's real palette
 onto its root element the way the app does, offers all six cards plus both
 appearances plus the panel's own palette, and `scripts/extract-themes.py` pulls
@@ -295,8 +304,9 @@ node install.mjs --uninstall
   patch; `%USERPROFILE%\.t3` does not.
 - Reload the window with `Ctrl+R` (`Ctrl+Shift+R` to skip the cache). `t3 update`
   replaces the client, so re-run `node install.mjs` after one.
-- Chinese in a conversation stays readable: the panel's font stack names
-  `Microsoft YaHei` after the monospace family.
+- Chinese in a conversation stays readable: the panel uses the app's own
+  `--font-sans` (Inter Variable where installed, Segoe UI on Windows), and the
+  browser falls back to the system CJK fonts the app itself uses.
 - The fixture script is the only Python in the repo, so it is `python`, not
   `python3`: `python -I scripts\make-fixture.py > demo\fixture.json`. The demo
   page is plain static files — `python -m http.server 8791`, then open
