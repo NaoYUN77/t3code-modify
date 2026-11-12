@@ -88,7 +88,7 @@ const CSS = `
 
   position: fixed;
   top: 0; right: 0; bottom: 0;
-  width: 420px;
+  width: var(--t3-timeline-width, 420px);
   display: flex; flex-direction: column;
   /* Flat, like the app's own panels — no gradient of our own to clash with the
      theme's surface. The detail pane below is the one raised step. */
@@ -109,6 +109,24 @@ const CSS = `
   z-index: 2147483000;
   transition: width .18s ease;
 }
+/* While the edge is being dragged the width has to track the pointer with no
+   easing, or the panel lags a few frames behind the cursor. */
+.dock.resizing { transition: none; cursor: col-resize; user-select: none; }
+
+/* The width grip: the panel's left edge, in both layouts — floating, the panel
+   is anchored to the right, and docked it sits right of the chat, so that edge
+   is the divider between the two in either case. */
+.grip {
+  position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; z-index: 6;
+  cursor: col-resize; background: transparent; touch-action: none;
+}
+.grip::after {
+  content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
+  background: transparent; transition: background .12s ease;
+}
+.grip:hover::after, .grip:focus-visible::after, .dock.resizing .grip::after { background: var(--tl-accent); }
+.grip:focus-visible { outline: none; }
+.dock.collapsed .grip { display: none; }
 .dock.collapsed { width: 34px; }
 .dock.collapsed .body, .dock.collapsed .head-text, .dock.collapsed .badge { display: none; }
 /* Two 22px buttons do not fit side by side in a 34px strip: stack them. */
@@ -295,6 +313,31 @@ const CSS = `
 .empty .note { display: block; margin-top: 6px; font-size: var(--text-xs, 12px); opacity: .75; word-break: break-all; white-space: pre-line; }
 `;
 
+// The dragged width lives in localStorage so it survives reloads and the
+// desktop app's restarts. The stylesheet keeps the defaults, so 0 means
+// "whatever the layout says": 420px floating, 410px docked.
+const WIDTH_KEY = 't3timeline:width';
+const MIN_WIDTH = 240;
+const MAX_WIDTH = 760;
+
+function readWidth() {
+  try {
+    const v = Math.round(Number(localStorage.getItem(WIDTH_KEY)));
+    return Number.isFinite(v) && v >= MIN_WIDTH && v <= MAX_WIDTH ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveWidth(width) {
+  try {
+    if (width) localStorage.setItem(WIDTH_KEY, String(width));
+    else localStorage.removeItem(WIDTH_KEY);
+  } catch {
+    /* a renderer that refuses storage still resizes for this session */
+  }
+}
+
 export class TimelinePanel {
   constructor({ collapsed = false } = {}) {
     this.nodes = [];
@@ -319,7 +362,11 @@ export class TimelinePanel {
     this.host.id = 't3-timeline-host';
     this.shadow = this.host.attachShadow({ mode: 'open' });
     this.collapsed = collapsed;
+    // The width the user dragged the edge to, if any. Stored rather than
+    // recomputed so it survives reloads; the defaults stay in the CSS.
+    this.width = readWidth();
     this.#render();
+    this.#applyWidth();
   }
 
   mount(target = document.body) {
@@ -393,6 +440,75 @@ export class TimelinePanel {
     return this;
   }
 
+  /** Put the dragged width where the dock's CSS reads it, or take it away. */
+  #applyWidth() {
+    if (this.width) this.host.style.setProperty('--t3-timeline-width', `${this.width}px`);
+    else this.host.style.removeProperty('--t3-timeline-width');
+  }
+
+  /**
+   * Drag the panel's left edge to resize it.
+   *
+   * Both layouts hang the panel off its right edge — floating it is pinned to
+   * the viewport's right, docked it sits right of the chat — so the left edge is
+   * the divider in either case, and dragging it left widens the panel. The
+   * width is clamped so the chat keeps room to be readable, persisted so it
+   * survives reloads, and reported through `onLayoutChange` because the panel's
+   * header has to dodge T3 Code's floating controls differently at each width.
+   */
+  #wireResize(grip) {
+    if (!grip) return;
+    const max = () => {
+      const room = this.docked ? window.innerWidth - 320 : window.innerWidth - 80;
+      return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, room));
+    };
+    const set = (width, { persist = false } = {}) => {
+      const next = Math.round(Math.max(MIN_WIDTH, Math.min(max(), width)));
+      if (next === this.width) return;
+      this.width = next;
+      this.#applyWidth();
+      this.onLayoutChange?.(this.collapsed);
+      if (persist) saveWidth(next);
+    };
+
+    let origin = null;
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || this.collapsed) return;
+      e.preventDefault();
+      origin = { x: e.clientX, width: this.dock.getBoundingClientRect().width };
+      this.dock.classList.add('resizing');
+      grip.setPointerCapture(e.pointerId);
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (!origin) return;
+      set(origin.width - (e.clientX - origin.x));
+    });
+    const end = () => {
+      if (!origin) return;
+      origin = null;
+      this.dock.classList.remove('resizing');
+      if (this.width) saveWidth(this.width);
+    };
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+    grip.addEventListener('lostpointercapture', end);
+    // No pointer at hand: the arrows do the same thing, and a double click
+    // gives the width back to the layout.
+    grip.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const now = this.dock.getBoundingClientRect().width || this.width || 420;
+      const step = e.shiftKey ? 48 : 16;
+      set(now + (e.key === 'ArrowLeft' ? step : -step), { persist: true });
+    });
+    grip.addEventListener('dblclick', () => {
+      this.width = 0;
+      this.#applyWidth();
+      saveWidth(0);
+      this.onLayoutChange?.(this.collapsed);
+    });
+  }
+
   /** The collapse button is its own inverse: `⟩` collapses, `⟨` expands. */
   #syncCollapseButton() {
     const button = this.dock.querySelector('.collapse');
@@ -461,6 +577,8 @@ export class TimelinePanel {
     dock.className = `dock${this.collapsed ? ' collapsed' : ''}`;
     dock.tabIndex = 0;
     dock.innerHTML = `
+      <div class="grip" role="separator" aria-orientation="vertical" aria-label="拖动调整宽度"
+        tabindex="0" title="拖动调整宽度，双击还原"></div>
       <div class="head">
         <div class="head-text">
           <h1>Timeline</h1>
@@ -501,6 +619,7 @@ export class TimelinePanel {
     // tearing the host out here would only have the integration put it back.
     dock.querySelector('.hide').addEventListener('click', () => this.setOpen(false));
     this.#syncCollapseButton();
+    this.#wireResize(dock.querySelector('.grip'));
 
     const track = dock.querySelector('.track');
     const move = (e) => {
