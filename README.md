@@ -249,6 +249,13 @@ cannot import ES modules):
   route cannot be read the way it is in the web client.
 - the **panel**, before `</body>`.
 
+The app's HTTP lives behind its preload bridge, which exposes no generic fetch,
+so there is usually no address or token to capture. Its RPC WebSocket, however,
+is an ordinary page WebSocket: the prelude keeps it, and the panel *rides on it*
+— it sends its own requests with ids far above the app's and never closes a
+socket it does not own. That is why the panel needs neither a token nor a
+`--server-url` in the desktop app.
+
 The original is kept as `<name>.asar.t3bak`. If the probe cannot find the
 install, name it with `--app-dir "C:\path\to\t3code"`; if the app's requests do
 not go through `window.fetch`, pass `--server-url http://host:port` and the
