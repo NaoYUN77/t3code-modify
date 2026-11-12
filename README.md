@@ -1,51 +1,72 @@
 # t3-code-ui-timeline
 
 A **Timeline** panel for the T3 Code client: one scrubbable track over a task's
-whole life — what you asked for, every answer and question, every tool call with
-the arguments it was given and the output it returned, every file change with its
-diff, every restore point, every interruption and failure. Drag the playhead and
-the step under it opens: the decision as it was made, the call as it was run.
+whole life, **bounded by what you asked for**. One user message opens a
+conversation and the next one closes it; everything in between — the tool calls,
+the commands, the file changes and their diffs, the asides on the way — is
+counted and folded away, and what the panel shows for each conversation is the
+question and the agent's last word on it. Drag the playhead and that pair opens:
+what you asked, in your own words, and what came of it.
 
 It is not a separate app and not a separate page. It docks as a column beside
 the thread's chat, and its toggle is a clone of T3 Code's own toolbar button, so
 it inherits the app's styling and sits in the app's own control group:
 
-![the timeline in T3 Code's default look](docs/real-default-light.png)
+![the timeline in T3 Code, in the client's default look](docs/real-default-light.png)
 
-and it is painted by whichever theme the app is wearing — here T3 Chat, dark:
+## What a conversation is
 
-![the same panel under the T3 Chat theme, dark](docs/real-t3chat-dark.png)
+The thread this was built against is **3.5k steps long, over 150
+conversations** — 5347 items, 1821 of them the model's private reasoning, the
+rest the record of what it did. Reading a task back is not reading the middle of
+that, so the panel draws the ends:
 
-`docs/toolbar-button.png` is a close-up of the top-right corner: the panel's own
-close button in its header, then T3 Code's control group — the pulse icon
-(highlighted, because the panel is open) sits between T3 Code's own buttons.
+| | |
+| --- | --- |
+| **the boundary** | a user message. It opens a conversation, and the next user message closes it. |
+| **the end** | the last thing the agent put in front of the user before that next message: an answer, a question, an ask for a key, an ask for permission. On this thread that is 135 answers, 5 asks for a key and 1 question — and 9 conversations that ended on nothing at all. The label over it says which kind of last word it was. |
+| **what is folded away** | everything else: tool calls, commands, file changes and their diffs, plans, subagent transcripts, checkpoints, compactions. 3376 steps fold into those 150 conversations, and one conversation's middle runs to 360 of them. They are counted, not shown — nothing in the panel is a diff or a tool call any more. |
 
-## What a step is
+What one conversation opens to, then its neighbours below it:
 
-Every turn item the model produced **except its private reasoning** — reasoning
-is the one type left out, on purpose: it is the model talking to itself and it
-outnumbers everything else (1379 of the thread's 3907 items). The other 17 types
-all become steps, in three tiers so the track stays readable:
+![a conversation open: what was asked, then what came of it](docs/conversation.png)
 
-| tier | steps | why |
-| --- | --- | --- |
-| 0 | user message, question, secret request, plan, approval, checkpoint, compaction, interruption, error | a decision or a boundary — bright dots on the track |
-| 1 | answer, subagent, file change, notification | a detail of one |
-| 2 | tool, command, web search | texture, of which there are hundreds |
+A conversation with nothing to show says which kind of nothing it is, and — unless
+it is simply still being worked on — takes the error colour on the track rather
+than the accent:
 
-The thread this was built against carries **2624 steps over 85 turns** — `97
-指令 · 1.4k 工具 · 542 改动` in the header. Dragging the playhead is the point:
-the list beside it is a window of ±60 steps around wherever you are, because
-laying out two and a half thousand rows costs ~335ms (against ~25ms for a
-window). Dragging within the window repaints in 0.2ms a step; the list is only
-scrolled when the selected row has actually left view.
+- **`没有单独的回复`** — the agent put nothing in front of the user before the
+  next message. This is usually benign: sending a follow-up while a run is still
+  working opens the next conversation, and the answer that run eventually
+  produced closes *that* one, leaving this one with nothing at the moment it was
+  asked.
+- **`这一轮被打断，没有回复`** and **`这一轮出错，没有回复`** with the failure's own words
+  — an interrupt or a failure *ends* the conversation when it came after the
+  agent's last word. One that came before it stopped the work whose answer opens
+  the next conversation, so it is that one's to report; the data says which, not
+  the panel.
+- **`正在回复…`** — the work is in flight. An item still marked `running` is the
+  signal, and only the last conversation is allowed to use it (one run works at a
+  time, so a `running` item further back is stale — a run killed mid-item leaves
+  one — and a conversation that claimed to be answering forever would be worse
+  than one that says nothing).
 
-What a step opens to — a tool call, with the arguments it was given and the
-output it came back with; and a file change, with its diff:
+A conversation that was answered and *then* interrupted shows both: the answer,
+and a muted line under it — `这之后被打断 · Stopped by user`. 7 of the 150 have one.
 
-![a tool call's arguments and output](docs/step-tool.png)
+Steps before the first user message (a run woken by a notification, say) belong
+to no conversation and are left out.
 
-![a file change's diff](docs/step-diff.png)
+**The numbers on the ruler count conversations, not runs.** This thread has 150
+conversations against 139 runs, because everything you send while a run is still
+working splits that run into two. The run ordinal is what T3 Code keys turn
+diffs and restore points by (`run:thread:<id>:ordinal:<N>`) and it is not the
+number on the ruler, so the panel does not show run numbers anywhere.
+
+`src/timeline-core.js` still shapes *every* kind of step, and still knows what a
+file change's diff or a tool call's output looks like. That is the layer that
+decides what a step is; `conversations()` is the fold on top of it, and it is
+what the panel is handed.
 
 ## The style: it wears the app's theme
 
@@ -63,12 +84,16 @@ Two sources, in this order:
 | no theme — T3 Code's default black-and-white, and what "T3 Code" in that grid is | its own resolved `--background`, `--card`, `--foreground`, `--border`, `--muted`, `--accent`, `--primary`, `--toolbar-background`, `--code-foreground`, … | the same names, as the second link of each `var()` chain |
 
 So every chrome colour follows the app — surfaces, borders, text, the muted
-greys, the selection fill, code blocks, the scrollbar, and your own messages
-take the accent. The diff colours follow too, because the app derives them from
-its own tokens: `--diff-addition` is a fixed emerald, `--diff-deletion` is
-`--destructive`, which is the theme's error colour. Change the theme, change the
+greys, the selection fill, code blocks, the scrollbar — and so does what a
+conversation's *state* means: answered (or answering) takes the theme's accent,
+never answered takes the theme's error colour. Change the theme, change the
 appearance, drop a user theme file in — the panel repaints, because nothing was
-ever copied out.
+ever copied out. Two of the app's own palettes, applied the way the app applies
+them:
+
+![the panel under the T3 Chat theme, dark](docs/demo-t3chat-dark.png)
+
+![the panel under the Grove theme, light](docs/demo-grove-light.png)
 
 **Appearance** is asked of the app rather than guessed: T3 Code's `useTheme`
 toggles a `dark` class on `<html>`, and its stylesheet is written against that
@@ -78,46 +103,15 @@ are `oklch()` as often as hex, and only rendering one says how light it is — a
 failing that, the system preference, which is the app's own last resort as well.
 The answer matters for the handful of things a theme has no token for.
 
-**What deliberately does not follow the theme** is the step *kinds*. A theme
-names one accent and there are seventeen kinds of step, so the roles the theme
-does have an answer for take it, and the rest are five fixed hues, chosen to be
-distinct from one another and legible on either appearance:
-
-| kind | colour |
-| --- | --- |
-| user message | the theme's accent |
-| answer | the theme's text |
-| file change | the diff's own green |
-| notification, secret request | the theme's warning |
-| error, interruption | the theme's error |
-| plan, question | `#bb9af7` (fixed) |
-| tool | `#8ab4f8` (fixed) |
-| search, subagent, approval | `#2ac3de` (fixed) |
-| checkpoint | `#6b7394` (fixed) |
-| command | `#a9b1d6` (fixed) |
-
-Those five flip to darker variants on a light appearance (`#7c3aed`, `#2563eb`,
-`#0e7490`, `#71717a`, `#52525b`), which is all the light block in the panel's
-stylesheet does — every app-driven value above it is the app's to resolve. For
-anything else, the panel's own fallback palette is the third link in each chain:
-what it wears when it is running against the demo, or in a page that is neither
-T3 Code nor themed.
-
 The panel's own toggle is the app's button, cloned, so its styling was never
 ours to get wrong: it arrives with the app's classes, inherits the control
 group's colours, and its pressed state is the same `aria-pressed` the app's own
 panel toggles use.
 
-and under Grove, light, a third palette entirely:
-
-![the panel under the Grove theme, light](docs/real-grove-light.png)
-
 The demo harness is where this is exercised: it writes a theme's real palette
 onto its root element the way the app does, offers all six cards plus both
 appearances plus the panel's own palette, and `scripts/extract-themes.py` pulls
 those palettes out of the app's bundle so the demo applies genuine ones.
-`docs/panel.png` is the demo with T3 Chat, light — the page around the panel and
-the panel itself are the same palette, and neither was told about the other.
 
 ## Why this is small
 
@@ -128,14 +122,18 @@ What is reused, verified against T3 Code **0.1.7**:
 | Need | Already in T3 Code |
 | --- | --- |
 | The process, as data | event-sourced store `orchestration_v2_events` + projections `orchestration_v2_projection_*` in `~/.t3/userdata/statev2.sqlite` |
-| An ordered timeline | `OrchestratorV2.getTimelinePage`, index table `orchestration_v2_turn_item_positions`, `ProjectionStore.readTimelineIndex` |
+| An ordered timeline | the projection's own item order (`visibleTurnItems`), which is the index table `orchestration_v2_turn_item_positions`; `getTimelinePage` and `readTimelineIndex` read the same order from the other end |
 | The steps themselves | turn items: `user_message`, `assistant_message`, `reasoning`, `proposed_plan`, `tool_call*`, `command_execution`, `file_change`, `subagent`, `web_search`, `approval_request`, `user_input_request`, `secret_request`, `notification`, `compaction`, `run_interrupt_*`, `checkpoint`, `error` |
-| A file change's diff | `orchestration.getTurnItem` returns the item with its `diffStr` |
-| A tool call's output | the same call — the projection carries an item's metadata, not its output |
-| A turn's diff | `orchestration.getTurnDiff { threadId, fromTurnCount, toTurnCount }` |
+| Which conversation is still going | an item's own `status`: `running` while it is in flight, which is the signal the live conversation is read from |
 | Live updates | `orchestration.subscribeThread` (snapshot + event stream), `subscribeShell`, `subscribeCommandOutput` |
-| Restore points | a git ref per turn: `refs/t3/orchestration-v2/checkpoints/<scope>/ordinal/<n>` |
 | The connection | effect-RPC over `/ws` with **plain-JSON** frames |
+
+Everything a conversation shows is in the thread projection itself, which is why
+this got *smaller*: the two calls the panel used to make for a step's diff and a
+tool call's output (`orchestration.getTurnItem`, `orchestration.getTurnDiff`) are
+no longer needed, and neither is the map of fetched patches nor the re-apply
+after every re-sync that went with them. A conversation's two ends — your words
+and the agent's — are already in the snapshot.
 
 The one thing T3 Code does *not* have is a plugin API: the client is a prebuilt
 bundle with a hardcoded right-panel union (`diff`, `files`, `preview`, `file`,
@@ -149,10 +147,10 @@ file.
 
 ```
 install.mjs            patch / unpatch the T3 Code client (backs up index.html)
-src/t3-timeline.js     entry point: follows the SPA route, subscribes, feeds the panel
+src/t3-timeline.js     entry point: follows the SPA route, subscribes, folds, feeds the panel
 src/t3-integration.js  dock the panel in the thread page and clone its toolbar toggle
 src/t3-rpc.js          the T3 WebSocket client (ticket auth + JSON RPC frames)
-src/timeline-core.js   which turn items become steps; shaping, stats, diff parsing
+src/timeline-core.js   which turn items become steps, how a step is shaped, and the fold
 src/panel.js           the panel itself (shadow DOM, no build step)
 demo/index.html        standalone harness that renders the panel from a fixture
 scripts/make-fixture.py  captures a fixture out of the local sqlite, read-only
@@ -169,9 +167,14 @@ node install.mjs --uninstall
 
 Then hard-reload the T3 Code window, open a thread, and click the pulse icon in
 the thread header. Drag the playhead (or click a coloured dot, or a row in the
-list) to move through the task; `⌘/Ctrl+Shift+T` shows and hides the panel, and
-with the panel focused `←`/`→` step one step at a time, `Home`/`End` go to the
-ends of the task.
+list) to move through the conversations; `⌘/Ctrl+Shift+T` shows and hides the
+panel, and with the panel focused `←`/`→` move one conversation at a time,
+`Home`/`End` go to the ends of the task.
+
+The header carries two buttons of its own. `⟩` collapses the panel to a 34px
+strip — the column hands its width back to the chat and keeps only those two
+buttons — and the strip's `⟨` expands it again. `×` closes the panel outright,
+which is what the toolbar toggle or `⌘/Ctrl+Shift+T` undoes.
 
 Note: `t3 update` replaces the client, so re-run `node install.mjs` afterwards.
 
@@ -204,7 +207,7 @@ node install.mjs --uninstall
   patch; `%USERPROFILE%\.t3` does not.
 - Reload the window with `Ctrl+R` (`Ctrl+Shift+R` to skip the cache). `t3 update`
   replaces the client, so re-run `node install.mjs` after one.
-- Chinese in a tool's output stays readable: the panel's font stack names
+- Chinese in a conversation stays readable: the panel's font stack names
   `Microsoft YaHei` after the monospace family.
 - The fixture script is the only Python in the repo, so it is `python`, not
   `python3`: `python -I scripts\make-fixture.py > demo\fixture.json`. The demo
@@ -216,7 +219,7 @@ node install.mjs --uninstall
 ### Docking, and getting out of the app's way
 
 The panel becomes a column in the thread page's own layout row, right of the
-chat, so the chat makes room for it rather than being covered. Four things about
+chat, so the chat makes room for it rather than being covered. Six things about
 that are worth knowing, all of them found by measuring the live DOM in a
 headless browser:
 
@@ -240,6 +243,29 @@ headless browser:
   would also throw away anything the page had already put inline on that element
   (a font variable, typically — the one that makes the panel legible on a
   machine with no CJK fonts).
+- **A collapsed strip dodges downwards, not sideways.** Collapsed, the panel is
+  34px against the very right edge the floating group hangs over, so there is no
+  width left to move its buttons clear of it — and two 22px buttons do not fit
+  side by side in 34px, so they stack. The strip goes *under* the group instead:
+  the integration measures how far down it reaches and the header starts below
+  it. That is why collapsing is a measurement and not just a class — a strip
+  whose expand button sits beneath the app's own buttons is a strip you cannot
+  get out of.
+- **Where the width you hand back goes is not ours to decide.** T3 Code opens its
+  own thread-details panel once the *chat column* passes 1024px, and it decides
+  that from the column's width alone — no click is involved, from us or anyone.
+  Measured: with our panel docked at 410px in a 1500px window the chat is 834px
+  and the app's panel stays shut; give the chat 1024px and it opens, taking 278px
+  of its own. So in a wide window, collapsing the strip can be answered by the
+  app putting its panel into the space — the app behaving exactly as it does with
+  nothing docked. (It also settles an earlier mistake here: the app's panel was
+  thought to flip because our buttons' clicks escaped into it, and clicks were
+  being swallowed to stop that. Changing the docked width with no click at all
+  flips it just the same, so nothing has to be swallowed.)
+
+and collapsed it looks like this, the panel's two buttons below the app's:
+
+![the collapsed strip, below T3 Code's floating controls](docs/real-collapsed-strip.png)
 
 ## How it talks to T3 Code
 
@@ -258,38 +284,25 @@ ws://host/ws?orchestrationProtocol=2&wsTicket=<ticket>
 The panel subscribes with `orchestration.subscribeThread` and reads the first
 `snapshot`, whose `projection.visibleTurnItems` is already in timeline order.
 
-Two things about that snapshot shape the rest of the panel:
+**That snapshot is the whole thread; the re-syncs are not.** The first snapshot
+carried every item the thread has — 2292 of them on a second thread, against 2288
+in the store, so nothing had been left out — but the call the panel makes on every
+event, `getThreadProjection`, answers with the recent items only: 77 of them
+here, and the *same* 77 on every call. Replacing the list with that would quietly
+drop the earlier history the panel exists to scrub through, so updates are merged
+by item id and ordered by `item.ordinal`, which is global to the thread and
+therefore comparable between a complete snapshot and a window.
 
-- **It is a window, not the thread.** The client hands out the recent items —
-  a 77-item window on the thread this was built against, and the *same* window
-  on every re-sync. Replacing the panel's list with each update would quietly
-  drop the earlier history the panel exists to scrub through, so updates are
-  merged by item id and ordered by `item.ordinal`, which is global to the thread
-  and therefore comparable between a full snapshot and a window.
-- **It carries metadata, not substance.** No `diffStr` on a file change, no
-  `output` on a tool call — those read `+0 −0` and `[object Object]` if you
-  trust the projection. Both are fetched per step, once, when that step is first
-  selected: `orchestration.getTurnItem({ threadId, itemId })`. The results are
-  kept in a map and re-applied after every re-sync, since a re-sync rebuilds
-  every node from scratch.
-
-A restore point goes one step further: its own `files` list is a snapshot that
-is usually empty — 8 of the 100 checkpoints on this thread have one — so its
-detail shows the *turn's* changes instead, from
-`getTurnDiff({ threadId, fromTurnCount: turn − 1, toTurnCount: turn })`, and
-says so in the summary rather than passing one off as the other.
-
-Two things the panel does to keep a step legible once it has them: a tool's
-output is normalised out of whatever shape it arrived in (a file read comes back
-as `{ type, file: { filePath, content } }`, an MCP tool as content blocks),
-because rendering the object itself gets the reader `[object Object]`; and a
-command's summary drops the `cd <project> &&` it almost always opens with, which
-is the same directory every time and eats the whole row.
+That is also why a conversation is never half-known in the panel: it opened with
+the full list, and a re-sync only ever refreshes the tail of it. The one thing a
+re-sync shows is a newest conversation with no last word yet — because there
+genuinely is not one, the agent still being at work — which is the case the
+`running` status above exists to tell apart.
 
 ## The demo
 
 The same panel also runs against a captured fixture, which is how it was
-developed and how `docs/panel.png` was taken:
+developed and how the pictures above were taken:
 
 ```sh
 python3 -I scripts/make-fixture.py > demo/fixture.json   # refresh from local data
@@ -298,32 +311,37 @@ python3 -m http.server 8791
 # http://127.0.0.1:8791/demo/index.html?theme=T3%20Chat
 ```
 
-![the panel over the demo's stand-in layout, under a real T3 Code palette](docs/panel.png)
-
-The demo docks the panel into a stand-in layout of its own, so the shot shows
-the real thing; the difference is who owns visibility. Inside T3 Code the host
+The demo docks the panel into a stand-in layout of its own, so a shot shows the
+real thing; the difference is who owns visibility. Inside T3 Code the host
 reactivates the panel from its toolbar toggle, while in the demo the panel owns
 it. The theme picker in its sidebar applies a real palette (or the app's default
 look, or nothing at all) to the page's root element, `?theme=<label prefix>`
-starts on one of them, `?i=<n>` selects a node by index and `?type=file_change`
-selects the first of a kind. The fixture is a *sample* — every decision and boundary, and a few of each
-turn's tool calls — because the full thread is 2600 steps and half a megabyte of
-diffs; the script says which. The `demo/fonts/` CJK font is only there so the
-panel is legible on machines without CJK system fonts.
+starts on one of them, and `?i=<n>` selects a conversation by index.
+
+The fixture is a *sample* of the thread: every user message and every answer,
+because those are what the panel draws — plus a sample of the tool calls, diffs
+and checkpoints, because the middle it folds away is worth having in the data
+too. 260 steps fold into its 42 conversations, 3 of them unanswered. The
+`demo/fonts/` CJK font is only there so the panel is legible on machines without
+CJK system fonts.
 
 ## Not done yet
 
-- **Paging back past the snapshot window.** Merging keeps whatever the panel has
-  seen, but a freshly-opened long thread only ever sees the client's window;
-  `getTimelinePage` with `afterPosition` is what would backfill the rest.
-- **A list that scrolls the whole history.** The list is a window around the
-  playhead; reaching a step a thousand back means dragging the track. A
-  virtualised list would let the list itself scroll end to end.
-- **Picking the diff apart** — `parseDiff` numbers the lines of a whole git diff,
-  so a multi-file change gets one continuous line numbering rather than a fresh
-  count per file.
-- **Filtering.** Two and a half thousand steps is a lot of texture; a tier
-  toggle (`只显示决策`) would make the list worth scrolling.
-- **The app's own accent choices.** The panel takes the theme's accent for your
-  messages, but T3 Code also has separate tokens for a message's action button
-  and a secondary label that a richer panel could use rather than a fixed hue.
+- **Opening a conversation's middle.** Folding is a view, not a deletion: the
+  panel has every step and no way to ask for one. "What happened in this
+  conversation" — a collapsed list under the reply, or a second playhead — is the
+  obvious next thing, and it is why `timeline-core.js` still shapes all of them.
+- **A list that scrolls the whole history.** The list is a window of ±60
+  conversations around the playhead; at 150 conversations that is most of the
+  thread at the present and 90 of them at the top, so reaching the beginning
+  still means dragging the track. A virtualised list would let the list itself
+  scroll end to end.
+- **"Still working" from something better than an item's status.** The signal is
+  the newest item's `running` status and nothing else: a run that is alive but
+  stuck reads exactly like one that is thinking, and a run killed mid-item leaves
+  a `running` item behind. The run's own status is the thing worth reading, and
+  the panel does not have it in the snapshot it gets.
+- **The app's own accent choices.** The panel takes the theme's accent for what
+  was answered and the theme's error for what was not, but T3 Code also has
+  separate tokens for a message's action button and a secondary label that a
+  richer panel could use rather than a fixed hue.

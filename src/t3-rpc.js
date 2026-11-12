@@ -149,11 +149,6 @@ export class T3Client extends EventTarget {
 export const rpc = {
   getThreadProjection: 'orchestration.getThreadProjection',
   subscribeThread: 'orchestration.subscribeThread',
-  // A file change's `diffStr` and a tool call's `output` are not in the thread
-  // projection — that carries an item's metadata only — so both come from here,
-  // one item at a time.
-  getTurnItem: 'orchestration.getTurnItem',
-  getTurnDiff: 'orchestration.getTurnDiff',
 };
 
 export function subscribeThread(client, threadId) {

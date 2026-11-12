@@ -2,12 +2,12 @@
 //
 // It follows the SPA route, subscribes to the thread the user is looking at,
 // and docks the timeline beside that thread's chat, so that dragging back
-// through a task shows what was decided and what was run at each step.
+// through a task shows what was asked and what came of it.
 
 import { TimelinePanel } from './panel.js';
 import { Integration } from './t3-integration.js';
 import { T3Client, rpc, subscribeThread } from './t3-rpc.js';
-import { toNode } from './timeline-core.js';
+import { conversations, toNode } from './timeline-core.js';
 
 const DEBUG = new URLSearchParams(location.search).has('t3TimelineDebug');
 window.__T3_TIMELINE_DEBUG = DEBUG;
@@ -34,11 +34,13 @@ function nodesFromProjection(projection) {
 /**
  * Fold a projection into the steps already known.
  *
- * The client hands out a *window* over a thread's items — the recent ones, and
- * the same window on every re-sync — so replacing the list with each update
- * would quietly drop the earlier history the panel exists to scrub through.
- * Steps are matched by id and ordered by their ordinal, which is global to the
- * thread and therefore comparable between a full snapshot and a window.
+ * The subscription's first snapshot carries the whole thread — 5395 items on the
+ * one this was built against — but *re-reading* it does not: what the panel asks
+ * for on every event, `getThreadProjection`, answers with the recent items only,
+ * the same ~77 of them each time. Replacing the list with that would quietly drop
+ * the earlier history the panel exists to scrub through. Steps are matched by id
+ * and ordered by their ordinal, which is global to the thread and therefore
+ * comparable between a full snapshot and a window.
  */
 function mergeNodes(previous, incoming) {
   if (!previous.length) return incoming;
@@ -61,59 +63,6 @@ export async function boot() {
   let client = null;
   let currentThread; // undefined so the first call is never mistaken for a no-op
   let nodes = [];
-
-  // Steps arrive from the projection without the parts of them that are large:
-  // a file change has no diff, a tool call has no output. Those come from the
-  // item detail, per step, when it is first read — and are kept here, because a
-  // re-sync rebuilds every node from the projection and would drop them.
-  const fetched = new Map(); // step id -> the fields the detail added
-  const requested = new Set(); // steps already asked about, including empty answers
-
-  function withFetched(list) {
-    return list.map((node) => {
-      const patch = fetched.get(node.id);
-      return patch ? toNode({ ...node.raw, ...patch }) : node;
-    });
-  }
-
-  function attach(node, patch) {
-    fetched.set(node.id, patch);
-    const k = nodes.indexOf(node); // -1 once the thread has moved on
-    if (k < 0) return;
-    nodes[k] = toNode({ ...node.raw, ...patch });
-    panel.refresh();
-  }
-
-  /** Whether the projection left out something this step needs. */
-  function needsDetail(node) {
-    if (node.type === 'file_change') return !node.diff;
-    if (node.type === 'checkpoint') return node.turn > 0; // turn 0 opens the thread
-    return node.raw?.outputOmitted === true && !node.output;
-  }
-
-  async function loadDetail(node) {
-    if (!node || requested.has(node.id) || !needsDetail(node)) return;
-    requested.add(node.id);
-    try {
-      if (node.type === 'checkpoint') {
-        // The checkpoint records a snapshot, not the diff of the turn it opens;
-        // that turn's changes are the nearest thing to what it covers.
-        const { diff } = await client.call(rpc.getTurnDiff, {
-          threadId: currentThread,
-          fromTurnCount: node.turn - 1,
-          toTurnCount: node.turn,
-        });
-        if (diff) attach(node, { diffStr: diff });
-        return;
-      }
-      const { item } = await client.call(rpc.getTurnItem, { threadId: currentThread, itemId: node.raw.id });
-      if (!item) return;
-      if (item.diffStr) attach(node, { diffStr: item.diffStr });
-      else if (item.output) attach(node, { output: item.output });
-    } catch (e) {
-      log('could not load the detail of', node.id, e);
-    }
-  }
 
   const watch = async (threadId) => {
     if (currentThread === threadId) return;
@@ -148,8 +97,10 @@ export async function boot() {
       const applyProjection = (projection) => {
         if (currentThread !== threadId) return;
         if (projection?.thread) panel.setThread(projection.thread);
-        nodes = withFetched(mergeNodes(nodes, nodesFromProjection(projection)));
-        panel.setNodes(nodes);
+        // Steps are merged and kept; the panel is handed the conversations they
+        // bound, which is all it draws.
+        nodes = mergeNodes(nodes, nodesFromProjection(projection));
+        panel.setNodes(conversations(nodes));
       };
 
       for await (const item of subscribeThread(client, threadId)) {
@@ -162,8 +113,6 @@ export async function boot() {
       panel.setThread({ title: `连接失败：${e.message}`, id: threadId });
     }
   };
-
-  panel.onSelect = (node) => loadDetail(node);
 
   // Follow client-side navigation without hooking the router.
   let lastHref = location.href;

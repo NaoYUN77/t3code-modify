@@ -2,21 +2,20 @@
 // stylesheet can leak in or out, and stays usable whether it is mounted over
 // the real client or on the standalone demo page.
 
-import {
-  NODE_META,
-  formatArgs,
-  formatTime,
-  parseDiff,
-  shortPath,
-  shortTool,
-  stats,
-} from './timeline-core.js';
+import { NODE_META, formatTime, oneLine } from './timeline-core.js';
 
-// How many steps the list renders either side of the selected one. The list is
-// a window rather than the whole history: 2500 rows cost ~300ms to lay out,
-// against ~10ms for 120, and the panel redraws whenever the thread moves. The
-// track above is how the whole task is traversed; the list keeps the steps
-// around wherever you are, at a cost that does not grow with the thread.
+// The panel draws exactly one kind of node — a conversation — so what a
+// conversation looks like is read once here rather than looked up per row. The
+// other entries in NODE_META are still worth having: a conversation's reply is
+// labelled by the kind of step the agent's last word was.
+const CONV = NODE_META.conversation;
+
+// How many conversations the list renders either side of the selected one. The
+// list is a window rather than the whole history: 2500 rows cost ~300ms to lay
+// out, against ~10ms for 120, and the panel redraws whenever the thread moves.
+// The track above is how the whole task is traversed; the list keeps the
+// conversations around wherever you are, at a cost that does not grow with the
+// thread.
 const LIST_SPAN = 60;
 
 const CSS = `
@@ -102,6 +101,8 @@ const CSS = `
 }
 .dock.collapsed { width: 34px; }
 .dock.collapsed .body, .dock.collapsed .head-text, .dock.collapsed .badge { display: none; }
+/* Two 22px buttons do not fit side by side in a 34px strip: stack them. */
+.dock.collapsed .head { flex-direction: column; gap: 6px; padding: 8px 6px; }
 
 /* Light. With an app behind it every value above already comes from it — the
    app resolves the appearance itself and writes the colours it means — so what
@@ -154,10 +155,17 @@ const CSS = `
 /* …and leave that group's strip clear, so its buttons do not land on our
    title or badge. The inset is measured by the integration. */
 .dock.docked .head { padding-right: calc(10px + var(--t3-head-inset, 0px)); }
-/* Collapsing leaves a 34px strip, which only reads as anything over a floating
-   panel; docked, the toolbar toggle closes the panel outright instead, so this
-   slot is not worth the width it costs the title. */
-.dock.docked .collapse { display: none; }
+/* Collapsed, the panel is a 34px strip pinned to the same right edge that group
+   hangs over, so there is no width left to dodge sideways into: the strip goes
+   *under* it instead, starting below wherever the group ends. How far down that
+   is, is the host's to measure — see the integration.
+   The width is restated here because a bare .dock.collapsed loses to
+   .dock.docked, which also sets one (equal specificity, later in the file). */
+.dock.docked.collapsed { width: 34px; }
+.dock.docked.collapsed .head {
+  padding-right: 6px;
+  padding-top: calc(8px + var(--t3-head-top, 0px));
+}
 /* Docked, the panel is a column of a thread page that already names the
    thread — the second line is better spent on the counts than on a title
    squeezed down to one character. */
@@ -237,43 +245,13 @@ const CSS = `
 .chip { font-size: 10px; padding: 1px 6px; border-radius: 4px; border: 1px solid currentColor; white-space: nowrap; flex: 0 0 auto; }
 .msg { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--tl-fg); }
 .msg.quote { border-left: 2px solid var(--tl-accent); padding-left: 9px; color: var(--tl-code-fg); }
-.deltas { display: flex; gap: 8px; font-size: 11px; margin-bottom: 7px; }
-.add { color: var(--tl-add); } .del { color: var(--tl-del); }
-.files { margin: 0; padding-left: 16px; color: var(--tl-fg-dim); }
-
-.diff { margin: 0; font-size: 11px; line-height: 1.45; border-radius: 6px; background: var(--tl-code-bg); border: 1px solid var(--tl-line); }
-.diff .l { display: flex; white-space: pre; }
-.diff .l > .g { flex: 0 0 34px; text-align: right; padding-right: 8px; color: var(--tl-fg-faint); user-select: none; }
-.diff .l > .t { flex: 1 1 auto; overflow-wrap: normal; }
-.diff .add { background: rgba(158,206,106,.10); background: color-mix(in srgb, var(--tl-add) 14%, transparent); }
-.diff .add .t { color: color-mix(in srgb, var(--tl-add) 80%, var(--tl-code-fg)); }
-.diff .del { background: rgba(247,118,142,.10); background: color-mix(in srgb, var(--tl-del) 14%, transparent); }
-.diff .del .t { color: color-mix(in srgb, var(--tl-del) 80%, var(--tl-code-fg)); }
-.diff .hunk .t { color: var(--tl-accent); }
-.diff .meta .t { color: var(--tl-fg-faint); }
-
-/* A tool call's arguments and its output: two monospace blocks, since that is
-   what they are. */
+/* The two halves of a conversation in the detail pane: what was asked, then
+   what came of it. A label over the message rather than a box around it — the
+   reply is prose, not a diff. */
 .iohead { margin: 9px 0 4px; color: var(--tl-fg-faint); font-size: 10.5px; }
 .iohead:first-child { margin-top: 0; }
-.io {
-  /* Inherited rather than defaulted: the browser's UA stylesheet puts its own
-     monospace stack on every <pre>, which beats an inherited stack and has no
-     CJK in it — a command's output in Chinese came out as tofu boxes. */
-  font-family: inherit;
-  margin: 0; font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
-  border-radius: 6px; padding: 7px 9px; background: var(--tl-code-bg); border: 1px solid var(--tl-line); color: var(--tl-code-fg);
-}
-.io.out {
-  /* The result, a shade apart from the call it answered. */
-  background: #0d0d14;
-  background: color-mix(in srgb, var(--tl-code-bg) 80%, var(--tl-surface));
-  color: var(--tl-code-fg);
-}
-.io .omit { color: var(--tl-fg-faint); }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; font-size: 11px; color: var(--tl-fg-dim); }
-.kv b { font-weight: 500; color: var(--tl-fg-faint); }
-.outcome { color: var(--tl-fg-faint); font-size: 10.5px; }
+.msg.none { color: var(--tl-fg-faint); }
+.outcome { margin-top: 6px; color: var(--tl-fg-faint); font-size: 10.5px; }
 
 .list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 6px 14px; scrollbar-color: var(--tl-scroll) transparent; }
 .row {
@@ -288,6 +266,14 @@ const CSS = `
 .row .lead { display: flex; align-items: baseline; gap: 6px; }
 .row .sum { color: var(--tl-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .time { margin-left: auto; color: var(--tl-fg-faint); font-size: 10.5px; }
+/* A conversation is two lines — what was asked, what came of it — and the row is
+   the boundary between one conversation and the next, so it carries the rule. */
+.row.conv + .row.conv { border-top: 1px solid var(--tl-line); border-radius: 0; }
+.row .rep { display: flex; gap: 6px; margin-top: 2px; color: var(--tl-fg-dim); font-size: 11.5px; }
+.row .rep > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .rep .mark { color: var(--tl-fg-faint); }
+.row .rep.none { color: var(--tl-fg-faint); }
+.row.on .rep, .row.on .rep .mark { color: inherit; }
 .row.s1 { opacity: .82; }
 .row.s2 { opacity: .6; }
 .row.s1 .sum, .row.s2 .sum { color: var(--tl-fg-dim); }
@@ -309,6 +295,9 @@ export class TimelinePanel {
     // whether it currently fits where the host page has put it.
     this.open = true;
     this.onOpenChange = null;
+    // Fired when the panel's own footprint changes (collapsing), so the host can
+    // re-measure whatever it reserves around the panel. Only the host knows.
+    this.onLayoutChange = null;
 
     this.selected = -1; // the row and dot currently marked, for cheap repaints
     this.host = document.createElement('div');
@@ -338,9 +327,6 @@ export class TimelinePanel {
   setDocked(docked) {
     this.docked = docked;
     this.dock.classList.toggle('docked', docked);
-    // A collapsed strip belongs to the floating overlay; as a column it is just
-    // a sliver of wasted width.
-    if (docked) this.setCollapsed(false);
     // Set the layout properties one at a time rather than writing `cssText`:
     // the host page may have put inline properties of its own on this element
     // — a font variable, most often — and replacing the attribute would take
@@ -376,13 +362,28 @@ export class TimelinePanel {
     return this;
   }
 
-  /** Collapse to the narrow strip (floating mode only — see `setDocked`). */
+  /**
+   * Collapse to the narrow strip: the column hands its width back to the chat
+   * and the header keeps only its two buttons, so the panel is out of the way
+   * without being closed. `onLayoutChange` is the host's cue to re-measure what
+   * it reserves around the panel — docked, the strip ends up under T3 Code's
+   * floating controls, and only the host can measure those.
+   */
   setCollapsed(collapsed) {
+    if (this.collapsed === collapsed) return this;
     this.collapsed = collapsed;
     this.dock.classList.toggle('collapsed', collapsed);
-    const button = this.dock.querySelector('.collapse');
-    if (button) button.textContent = collapsed ? '⟨' : '⟩';
+    this.#syncCollapseButton();
+    this.onLayoutChange?.(collapsed);
     return this;
+  }
+
+  /** The collapse button is its own inverse: `⟩` collapses, `⟨` expands. */
+  #syncCollapseButton() {
+    const button = this.dock.querySelector('.collapse');
+    if (!button) return;
+    button.textContent = this.collapsed ? '⟨' : '⟩';
+    button.title = this.collapsed ? '展开' : '折叠';
   }
 
   setThread(thread) {
@@ -399,28 +400,21 @@ export class TimelinePanel {
     // — and follows the tail from there. Once the reader has scrubbed back it
     // stays where they left it: an update must not undo a look at the history.
     const wasAtEnd = this.nodes.length === 0 || this.index >= this.nodes.length - 1;
-    // A re-sync usually brings the same steps back with a few more fields filled
-    // in, and redrawing a few thousand dots and rows for that is the most
-    // expensive thing the panel does.
-    const sameSteps = nodes.length === this.nodes.length && nodes.every((n, k) => n.id === this.nodes[k].id);
+    // A re-sync usually brings the same conversations back — a reply that has
+    // grown a few tokens is the common case — and redrawing every dot and row
+    // for that is the most expensive thing the panel does. Same ids *and* same
+    // words is the same conversation; anything else is redrawn, and that
+    // includes a conversation starting or finishing work (`busy`) or gaining the
+    // note about what came after it (`stop`).
+    const same = nodes.length === this.nodes.length &&
+      nodes.every((n, k) => {
+        const was = this.nodes[k];
+        return n.id === was.id && n.text === was.text && n.reply === was.reply && n.busy === was.busy && n.stop === was.stop;
+      });
     this.nodes = nodes;
     this.index = wasAtEnd ? Math.max(0, nodes.length - 1) : Math.max(0, Math.min(this.index, nodes.length - 1));
-    if (!sameSteps) this.#paintFrame();
+    if (!same) this.#paintFrame();
     this.#paintSelection();
-    return this;
-  }
-
-  /**
-   * Re-read the selected step after it gained detail, as the host does for a
-   * file change whose diff it has just fetched. Only that step is touched: at a
-   * few thousand steps, a full repaint on every fetch is felt.
-   */
-  refresh() {
-    const i = Math.max(0, Math.min(this.index, Math.max(0, this.nodes.length - 1)));
-    const node = this.nodes[i];
-    const row = this.rowFor?.get(i);
-    if (row && node) row.querySelector('.sum').textContent = node.summary;
-    this.#paintDetail(node);
     return this;
   }
 
@@ -467,7 +461,7 @@ export class TimelinePanel {
             </div>
           </div>
           <div class="legend">
-            <i>◆ 用户</i><i>? 提问</i><i>▸ 回答</i><i>⚙ 工具</i><i>› 命令</i><i>✎ 改动</i><i>⏱ 还原点</i><i>✕ 错误</i>
+            <i>◆ 有回复</i><i>■ 没有回复 · 被打断或出错</i>
           </div>
         </div>
         <div class="detail"></div>
@@ -483,6 +477,7 @@ export class TimelinePanel {
     // Closing hands it back to the host, which owns the toggle that reopens it;
     // tearing the host out here would only have the integration put it back.
     dock.querySelector('.hide').addEventListener('click', () => this.setOpen(false));
+    this.#syncCollapseButton();
 
     const track = dock.querySelector('.track');
     const move = (e) => {
@@ -540,28 +535,28 @@ export class TimelinePanel {
     const n = this.nodes.length;
     const at = (k) => (n > 1 ? (k / (n - 1)) * 100 : 0);
 
-    const st = stats(this.nodes);
-    this.shadow.querySelector('.badge').textContent =
-      `${compact(st.users)} 指令 · ${compact(st.tools)} 工具 · ${compact(st.changes)} 改动`;
-    this.shadow.querySelector('.total').textContent = String(n);
+    this.shadow.querySelector('.badge').textContent = `${n} 次对话`;
+    this.shadow.querySelector('.total').textContent = `${n} 次对话`;
     this.selected = -1;
 
-    // One dot per step, coloured by kind and sized by how often that kind
-    // happens; the selected one grows. Built as markup rather than elements:
-    // there are thousands of them.
+    // One dot per conversation — the whole task is only ever this many dots, so
+    // unlike a per-step track there is nothing to thin. A conversation the agent
+    // never answered is the one worth spotting, so it is the one that takes a
+    // different colour. Built as markup rather than elements: there can be
+    // hundreds.
     const dots = this.shadow.querySelector('.dots');
     dots.innerHTML = this.nodes
       .map((nd, k) => {
-        const meta = NODE_META[nd.type];
-        const label = esc(`${k + 1}. ${meta.label} — ${nd.summary}`);
-        return `<span class="dot t${meta.tier ?? 1}" style="left:${at(k)}%;color:${meta.accent}" title="${label}"></span>`;
+        const label = esc(`${k + 1}. 第 ${k + 1} 次对话 — ${nd.summary}`);
+        return `<span class="dot t${CONV.tier}" style="left:${at(k)}%;color:${accentOf(nd)}" title="${label}"></span>`;
       })
       .join('');
     this.dotEls = dots.children;
 
-    // A turn ruler above the rail: one number per turn, thinning out to fit.
-    // The spacing follows the turns rather than the steps — there are 80 turns
-    // and a few thousand steps, and steps are not evenly spread over them.
+    // A ruler above the rail: one number per conversation, thinning out to fit.
+    // The number is the conversation's place in the thread, not a run ordinal —
+    // 144 conversations here against 113 runs, since what the user sends while a
+    // run works splits it.
     const marks = [];
     let prevTurn = Symbol('none');
     this.nodes.forEach((nd, k) => {
@@ -570,10 +565,9 @@ export class TimelinePanel {
       if (nd.turn != null) marks.push(k);
     });
     const width = this.shadow.querySelector('.track')?.clientWidth || 380;
-    // Thinned by the space a number actually takes up, not by counting: turns
-    // are unevenly spread over the steps, so dropping every n-th one still
-    // leaves neighbours overlapping where a busy stretch of turns sits in a
-    // narrow part of the track.
+    // Thinned by the space a number actually takes up, not by counting: 144
+    // numbers do not fit in a 380px track, and dropping every n-th would still
+    // leave three-digit neighbours overlapping at the right-hand end.
     const minPx = 26;
     let lastPx = -Infinity;
     const shown = [];
@@ -598,7 +592,9 @@ export class TimelinePanel {
     this.shadow.querySelector('.fill').style.width = `${pct}%`;
     this.shadow.querySelector('.handle').style.left = `${pct}%`;
     this.shadow.querySelector('.pos .n').textContent = n ? String(i + 1) : '–';
-    this.shadow.querySelector('.readout .turn').textContent = node?.turn != null ? `第 ${node.turn} 轮` : '';
+    // The count beside it reads "57 / 144 次对话", so this line is the *when*:
+    // the panel's own label for the number would only say it twice.
+    this.shadow.querySelector('.readout .turn').textContent = formatTime(node?.startedAt);
 
     // The window follows the selection, so it is rebuilt only once a drag has
     // carried the playhead out of it — not on every step of one.
@@ -614,7 +610,6 @@ export class TimelinePanel {
 
     this.#paintDetail(node);
     if (scroll) this.#reveal(i);
-    this.onSelect?.(node, i);
   }
 
   /**
@@ -642,23 +637,26 @@ export class TimelinePanel {
   #paintDetail(node) {
     const el = this.shadow.querySelector('.detail');
     if (!node) {
-      el.innerHTML = '<div class="empty">没有可显示的关键节点</div>';
+      el.innerHTML = '<div class="empty">这个线程还没有可记录的对话</div>';
       return;
     }
-    const meta = NODE_META[node.type];
-    const full = node.type === 'file_change' ? node.fileName || '' : node.summary || '';
     const head = `<div class="dhead">
-        <span class="chip" style="color:${meta.accent}">${meta.glyph} ${meta.label}</span>
-        <span class="name" title="${esc(full)}">${esc(node.type === 'file_change' ? shortPath(node.fileName) : full)}</span>
-        <span class="when">${esc(formatTime(node.startedAt))}${node.turn != null ? ` · run ${node.turn}` : ''}</span>
+        <span class="chip" style="color:${accentOf(node)}">${CONV.glyph} 第 ${node.index} 次对话</span>
+        <span class="name" title="${esc(node.text)}">${esc(node.summary)}</span>
+        <span class="when">${esc(formatTime(node.startedAt))}</span>
       </div>`;
 
-    el.innerHTML = `<div class="dscroll">${head}${stepBody(node)}</div>`;
+    el.innerHTML = `<div class="dscroll">${head}${conversationBody(node)}</div>`;
   }
 
   /**
-   * Rows for the window of steps around the selection. Rebuilt when the steps
-   * themselves change, and when the selection leaves the window.
+   * Rows for the window of conversations around the selection. Rebuilt when the
+   * conversations themselves change, and when the selection leaves the window.
+   *
+   * A row is one boundary: what the user asked, and under it what the agent
+   * finally said. Nothing from in between is listed — that is the whole point of
+   * grouping this way — so the row is the boundary and needs no separator of its
+   * own.
    */
   #buildList() {
     const n = this.nodes.length;
@@ -669,26 +667,23 @@ export class TimelinePanel {
     const html = [];
     // How much of the history is off either end, so the window is not mistaken
     // for the whole task.
-    if (from > 0) html.push(`<div class="turnsep edge">上方还有 ${from} 步</div>`);
-    let lastTurn = Symbol('none');
+    if (from > 0) html.push(`<div class="turnsep edge">上方还有 ${from} 次对话</div>`);
     for (let k = from; k < to; k++) {
       const node = this.nodes[k];
-      if (node.turn !== lastTurn) {
-        lastTurn = node.turn;
-        html.push(`<div class="turnsep">第 ${node.turn ?? '?'} 轮</div>`);
-      }
-      const meta = NODE_META[node.type];
       html.push(
-        `<div class="row s${meta.tier ?? 1}" data-k="${k}">` +
+        `<div class="row conv s${CONV.tier}" data-k="${k}">` +
           `<div class="no">${k + 1}</div>` +
-          `<div class="txt"><div class="lead">` +
-          `<span style="color:${meta.accent}">${meta.glyph}</span>` +
+          `<div class="txt">` +
+          `<div class="lead">` +
+          `<span style="color:${accentOf(node)}">${CONV.glyph}</span>` +
           `<span class="sum">${esc(node.summary)}</span>` +
           `<span class="time">${esc(formatTime(node.startedAt))}</span>` +
-          `</div></div></div>`,
+          `</div>` +
+          replyLine(node) +
+          `</div></div>`,
       );
     }
-    if (to < n) html.push(`<div class="turnsep edge">下方还有 ${n - to} 步</div>`);
+    if (to < n) html.push(`<div class="turnsep edge">下方还有 ${n - to} 次对话</div>`);
     const list = this.shadow.querySelector('.list');
     list.innerHTML = html.join('') || '';
     if (!this.nodes.length) list.replaceChildren(emptyRow());
@@ -703,156 +698,74 @@ export class TimelinePanel {
   }
 }
 
-/** The body of the detail pane: what this step actually was. */
-function stepBody(node) {
-  switch (node.type) {
-    case 'user_message':
-    case 'assistant_message':
-    case 'proposed_plan':
-      return `<div class="msg${node.type === 'user_message' ? ' quote' : ''}">${esc(node.text || '（无内容）')}</div>`;
+/** A conversation's colour, everywhere it is drawn: the panel's own palette for
+ *  one the agent has answered or is answering, the error colour for one it
+ *  never did. */
+function accentOf(node) {
+  return node.reply || node.busy ? CONV.accent : 'var(--tl-stop)';
+}
 
-    case 'user_input_request':
-      return (
-        `<div class="msg quote">${esc(node.text || '（无内容）')}</div>` +
-        (node.questions || [])
-          .map((q) => {
-            const options = (q.options || [])
-              .map((o) => `<li>${esc(o.label ?? o.description ?? String(o))}</li>`)
-              .join('');
-            return `<div class="iohead">选项</div><div class="msg">${esc(q.header ? `${q.header} · ` : '')}${esc(q.question ?? '')}</div>${options ? `<ul class="files">${options}</ul>` : ''}`;
-          })
-          .join('') +
-        renderAnswer(node)
-      );
-
-    case 'secret_request':
-      return (
-        block([
-          ['用途', node.label],
-          ['说明', node.reason],
-          ['格式', node.placeholder],
-          ['存放', node.secretStatus],
-        ]) || '<div class="msg" style="color:var(--tl-fg-faint)">（无内容）</div>'
-      );
-
-    case 'dynamic_tool':
-      return (
-        ioBlock('调用', formatArgs(node.toolArgs), { empty: '（无参数）' }) +
-        ioBlock('输出', clip(node.output), { out: true, empty: node.outputOmitted ? '输出没有随投影返回' : '（无输出）' })
-      );
-
-    case 'command_execution':
-      return (
-        ioBlock('命令', node.command || '', { empty: '（无命令）' }) +
-        ioBlock('输出', clip(node.output), { out: true, empty: node.outputOmitted ? '输出没有随投影返回' : '（无输出）' })
-      );
-
-    case 'web_search':
-      return (
-        `<div class="msg">${node.patterns.map((p) => esc(p)).join('<br>') || '（无查询）'}</div>` +
-        (node.results || [])
-          .slice(0, 10)
-          .map((r) => `<div class="io">${esc(r.title ?? r.url ?? JSON.stringify(r))}</div>`)
-          .join('')
-      );
-
-    case 'subagent':
-      return (
-        ioBlock('任务', node.prompt || node.title || '', { empty: '（无描述）' }) +
-        // A subagent still running has progress but no result yet.
-        (node.result
-          ? ioBlock('结果', clip(node.result), { out: true })
-          : ioBlock('进展', node.progress, { out: true, empty: '（无进展）' }))
-      );
-
-    case 'file_change': {
-      const deltas = `<div class="deltas"><span class="add">+${node.additions ?? '?'}</span><span class="del">−${node.deletions ?? '?'}</span></div>`;
-      return deltas + renderDiff(node.diff);
-    }
-
-    case 'checkpoint': {
-      const files = (node.files || []).slice(0, 40);
-      const list = files.length
-        ? `<ul class="files">${files.map((f) => `<li>${esc(shortPath(f.path))} <span class="add">+${f.additions}</span> <span class="del">−${f.deletions}</span></li>`).join('')}</ul>`
-        : '';
-      // The checkpoint records a snapshot, not a diff; when it has no file list
-      // of its own, the turn's changes (fetched separately, see `loadDetail`)
-      // stand in for it.
-      return (
-        `<div class="msg">还原点 · 第 ${node.turn ?? '?'} 轮开始时的快照</div>` +
-        (list || (node.diff ? '' : '<div class="msg" style="color:var(--tl-fg-faint)">没有记录文件清单</div>')) +
-        (node.diff ? renderDiff(node.diff) : '')
-      );
-    }
-
-    case 'notification':
-      return `<div class="msg">${esc(node.notice || '（无内容）')}</div>${node.outcome ? `<div class="outcome">${esc(node.outcome)}</div>` : ''}`;
-
-    case 'compaction':
-      return block([
-        ['压缩前', node.before == null ? '' : `${node.before} tokens`],
-        ['压缩后', node.after == null ? '' : `${node.after} tokens`],
-      ]);
-
-    case 'run_interrupt_request':
-    case 'run_interrupt_result':
-      return `<div class="msg" style="color:var(--tl-del)">${esc(node.message || '打断')}</div>`;
-
-    case 'error':
-      return `<div class="msg" style="color:var(--tl-del)">${esc(node.text || '执行出错')}</div>`;
-
-    default:
-      return `<div class="msg">${esc(node.summary || '')}</div>`;
+/** The second line of a row: what the agent finally said, in one line. */
+function replyLine(node) {
+  if (node.reply) {
+    return `<div class="rep"><span class="mark">▸</span><span>${esc(oneLine(node.reply, 110))}</span></div>`;
   }
+  // `▸` says there was a reply, `■` that there never will be one, `…` that this
+  // one is still coming.
+  return `<div class="rep none"><span class="mark">${node.busy ? '…' : '■'}</span><span>${esc(whyUnanswered(node))}</span></div>`;
 }
 
-/** A label over a monospace block; `empty` covers an absent or withheld value. */
-function ioBlock(label, text, { out = false, empty = '（空）' } = {}) {
-  const body = text ? esc(text) : `<span class="omit">${esc(empty)}</span>`;
-  return `<div class="iohead">${esc(label)}</div><pre class="io${out ? ' out' : ''}">${body}</pre>`;
+/**
+ * Why a conversation has nothing to show, in as few words as the data allows.
+ *
+ * Most of them are not failures: a user message sent while a run was still
+ * working opens the next conversation, and the answer that run eventually
+ * produced closes *that* one — which leaves this one with nothing to show, at
+ * the moment it was actually asked. So the two worth naming are the interrupt
+ * and the failure, and whether one of those ended this conversation rather than
+ * the next is the data's to say (see `conversations`).
+ */
+function whyUnanswered(node) {
+  // Not unanswered — unanswerable *yet*. Checked first: the live conversation is
+  // the one a reader is most likely to be looking at.
+  if (node.busy) return '正在回复…';
+  if (node.stop === 'run_interrupt_request' || node.stop === 'run_interrupt_result') return '这一轮被打断，没有回复';
+  if (node.stop === 'error') return `这一轮出错，没有回复${tail(node)}`;
+  return '没有单独的回复';
 }
 
-/** A two-column list of labelled values, skipping the ones that are not there. */
-function block(rows) {
-  const shown = rows.filter(([, v]) => v);
-  if (!shown.length) return '';
-  return `<div class="kv">${shown.map(([k, v]) => `<b>${esc(k)}</b><span>${esc(v)}</span>`).join('')}</div>`;
+/** The failure's own words, when they are short enough to sit in a row.
+ *  `oneLine` and not the raw text: a failure message runs to a whole stack. */
+function tail(node) {
+  return node.stopText ? ` · ${esc(oneLine(node.stopText, 120))}` : '';
 }
 
-/** Long outputs are shown clipped, with the size of the remainder said. */
-function clip(text, max = 4000) {
-  const s = String(text ?? '');
-  return s.length > max ? `${s.slice(0, max)}\n… 还有 ${s.length - max} 个字符` : s;
-}
-
-function renderDiff(diff) {
-  const lines = parseDiff(diff);
-  if (!lines.length) return '<div class="msg" style="color:var(--tl-fg-faint)">（无 diff 文本）</div>';
-  const shown = lines.slice(0, 400);
-  const html = shown
-    .map((l, k) => `<div class="l ${l.kind}"><span class="g">${k + 1}</span><span class="t">${esc(l.text) || ' '}</span></div>`)
-    .join('');
-  const more = lines.length > shown.length ? `<div class="l"><span class="g"></span><span class="t" style="color:var(--tl-fg-faint)">… 还有 ${lines.length - shown.length} 行</span></div>` : '';
-  return `<div class="diff">${html}${more}</div>`;
-}
-
-function renderAnswer(node) {
-  const a = node.answer;
-  if (!a) return '';
-  const text = a.answer ?? a.text ?? (Array.isArray(a.answers) ? a.answers.join('、') : '');
-  return text ? `<div class="msg" style="margin-top:6px"><span style="color:var(--tl-add)">回答：</span>${esc(text)}</div>` : '';
+/** The body of the detail pane: what was asked, and what came of it. */
+function conversationBody(node) {
+  const asked = `<div class="iohead">你</div><div class="msg quote">${esc(node.text || '（空消息）')}</div>`;
+  if (!node.reply) {
+    // Still being worked on says itself and needs no label over it; nothing at
+    // all needs the label, because the reason is what the line is.
+    return node.busy
+      ? asked + '<div class="msg none">正在回复…</div>'
+      : asked + `<div class="iohead">回复</div><div class="msg none">${esc(whyUnanswered(node))}</div>`;
+  }
+  // The label is the *kind* of last word it was: a turn can end on a question or
+  // an ask for a key rather than on an answer.
+  const kind = NODE_META[node.replyKind]?.label ?? '回复';
+  // A turn that failed often has the failure as its last *message* as well as an
+  // error item after it, and printing the same sentence twice reads as two
+  // things going wrong.
+  const said = node.stopText && !node.reply.includes(node.stopText) ? tail(node) : '';
+  const after = node.stop ? `<div class="outcome">这之后${node.stop === 'error' ? '出错' : '被打断'}${said}</div>` : '';
+  return asked + `<div class="iohead">${esc(kind)}</div><div class="msg">${esc(node.reply)}</div>` + after;
 }
 
 function emptyRow() {
   const d = document.createElement('div');
   d.className = 'empty';
-  d.textContent = '这个线程还没有可记录的步骤';
+  d.textContent = '这个线程还没有可记录的对话';
   return d;
-}
-
-/** Counts in the header: the tools alone run into four figures. */
-function compact(n) {
-  return n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 function esc(s) {
