@@ -329,16 +329,17 @@ function extractToTemp(asar) {
 // --- injection -------------------------------------------------------------
 
 function ensureBundle() {
-  if (!fs.existsSync(BUILD) || flag('--rebuild')) {
-    say('bundling src/ into one IIFE with esbuild…');
-    fs.mkdirSync(path.dirname(BUILD), { recursive: true });
-    run(
-      'npx',
-      ['--yes', 'esbuild@0.25.0', path.join(SRC, 't3-timeline.js'), '--bundle', '--format=iife',
-        '--target=chrome120', `--outfile=${BUILD}`, '--log-level=warning'],
-      { cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'] },
-    );
-  }
+  // Always rebuild. A cached bundle is invisible: editing src/ and re-patching
+  // would keep injecting the previous build, which reads as "the change did
+  // nothing". esbuild takes about a second.
+  say('bundling src/ into one IIFE with esbuild…');
+  fs.mkdirSync(path.dirname(BUILD), { recursive: true });
+  run(
+    'npx',
+    ['--yes', 'esbuild@0.25.0', path.join(SRC, 't3-timeline.js'), '--bundle', '--format=iife',
+      '--target=chrome120', `--outfile=${BUILD}`, '--log-level=warning'],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'inherit'] },
+  );
   const code = fs.readFileSync(BUILD, 'utf8');
   if (/<\/script/i.test(code)) die('the bundle contains "</script" — inline injection would break the HTML');
   return code;
@@ -436,8 +437,10 @@ function swapIn(app, dir, { backup = true } = {}) {
   const patterns = [...new Set(unpackedEntries(app.asar).map((p) => path.basename(p)))];
   const out = path.join(app.resources, `.t3patch-${Date.now()}.asar`);
   pack(dir, out, patterns);
+  // Write-once: the first backup is the only pristine one. Overwriting it on a
+  // re-patch would make --uninstall restore a patched archive.
   const file = `${app.asar}.t3bak`;
-  if (backup && (!fs.existsSync(file) || flag('--force'))) fs.copyFileSync(app.asar, file);
+  if (backup && !fs.existsSync(file)) fs.copyFileSync(app.asar, file);
   try {
     fs.copyFileSync(out, app.asar);
   } catch (e) {
@@ -500,7 +503,7 @@ function patch() {
   if (fs.existsSync(backup) && !flag('--force')) {
     die(
       `a backup already exists: ${backup} — this app has been patched before.\n` +
-        'Run --uninstall first, or --patch --force to overwrite the backup with the current asar.',
+        'Run --uninstall first, or --patch --force to re-patch (the original backup is kept).',
     );
   }
 

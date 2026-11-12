@@ -282,6 +282,7 @@ const CSS = `
 .turnsep.edge { margin: 7px 8px; color: var(--tl-fg-faint); }
 .turnsep.edge::after { flex: 0 0 0; }
 .empty { color: var(--tl-fg-faint); padding: 20px 14px; text-align: center; }
+.empty .note { display: block; margin-top: 6px; font-size: 11px; opacity: .75; word-break: break-all; }
 `;
 
 export class TimelinePanel {
@@ -289,6 +290,10 @@ export class TimelinePanel {
     this.nodes = [];
     this.index = 0;
     this.thread = null;
+    // A second, smaller line under the empty state — what the host knows about
+    // why there is nothing to draw (which thread, which server, how many raw
+    // items arrived). Empty in the web client, where the empty state is enough.
+    this.emptyNote = '';
     this.docked = false;
     this.visible = true;
     // Whether the user wants the panel, as opposed to `visible`, which is
@@ -392,6 +397,14 @@ export class TimelinePanel {
     const sub = this.shadow.querySelector('.head .sub .thread');
     if (title) title.textContent = 'Timeline';
     if (sub) sub.textContent = thread?.title || thread?.id || '';
+    return this;
+  }
+
+  /** Text under the empty state, updated live while the panel shows nothing. */
+  setEmptyNote(note) {
+    this.emptyNote = note || '';
+    const el = this.shadow?.querySelector('.detail .empty');
+    if (el) el.innerHTML = emptyMarkup(this.emptyNote);
     return this;
   }
 
@@ -637,7 +650,7 @@ export class TimelinePanel {
   #paintDetail(node) {
     const el = this.shadow.querySelector('.detail');
     if (!node) {
-      el.innerHTML = '<div class="empty">这个线程还没有可记录的对话</div>';
+      el.innerHTML = `<div class="empty">${emptyMarkup(this.emptyNote)}</div>`;
       return;
     }
     const head = `<div class="dhead">
@@ -764,8 +777,13 @@ function conversationBody(node) {
 function emptyRow() {
   const d = document.createElement('div');
   d.className = 'empty';
-  d.textContent = '这个线程还没有可记录的对话';
+  d.innerHTML = emptyMarkup('');
   return d;
+}
+
+/** The empty state, plus the host's note when it has one. */
+function emptyMarkup(note) {
+  return `这个线程还没有可记录的对话${note ? `<span class="note">${esc(note)}</span>` : ''}`;
 }
 
 function esc(s) {
