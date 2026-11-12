@@ -126,26 +126,34 @@ const CSS = `
   cursor: col-resize; background: transparent; touch-action: none;
   pointer-events: auto;
 }
-/* T3 Code's own resize handle is a 1px divider that only appears on hover; it
-   is invisible at rest, which is why the edge did not look draggable. On top of
-   that, a small resting grip — the six dots the app's own GripVertical icon
-   draws — so the edge says what it does before the pointer gets there. */
+/* The mark on the divider is the one T3 Code puts on its own split view: two
+   thin bars a pixel apart, 24px tall, centred vertically — its browser pane's
+   resize handles draw exactly this (BrowserViewportResizeHandles.tsx), and they
+   are the app's only resize grip that is visible before the pointer arrives.
+   The colours are that component's too: muted at rest, near-foreground on
+   hover, foreground while dragging. Underneath, the 1px line is the divider
+   from the app's side-panel handle: transparent until hover, the border colour
+   then, accent while the pointer is down. */
 .grip::before {
   content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px;
   background: transparent; transition: background .15s ease;
 }
 .grip::after {
-  content: ""; position: absolute; left: 3px; top: 50%; width: 8px; height: 21px;
-  margin-top: -11px;
-  background-image: radial-gradient(currentColor 1.2px, transparent 1.4px);
-  background-size: 4px 7px; background-position: 1px 1px;
-  color: var(--tl-fg-dim); opacity: .8;
+  content: ""; position: absolute; left: 1px; top: 50%; width: 3px; height: 24px;
+  margin-top: -12px;
+  background-image: linear-gradient(currentColor, currentColor), linear-gradient(currentColor, currentColor);
+  background-size: 1px 100%, 1px 100%;
+  background-position: 0 0, 2px 0;
+  background-repeat: no-repeat;
+  color: var(--tl-fg-dim); opacity: .55;
   transition: opacity .15s ease, color .15s ease;
 }
-.grip:hover::before, .grip:focus-visible::before { background: var(--tl-line); }
-.grip:hover::after, .grip:focus-visible::after { opacity: 1; color: var(--tl-accent); }
+.grip:hover::before { background: var(--tl-line); }
+.grip:hover::after { opacity: .85; color: var(--tl-fg); }
+.grip:focus-visible::before { background: color-mix(in srgb, var(--tl-accent) 60%, transparent); }
+.grip:focus-visible::after { opacity: 1; color: var(--tl-fg); }
 .dock.resizing .grip::before { background: color-mix(in srgb, var(--tl-accent) 60%, transparent); }
-.dock.resizing .grip::after { opacity: 1; color: var(--tl-accent); }
+.dock.resizing .grip::after { opacity: 1; color: var(--tl-fg); }
 .grip:focus-visible { outline: none; }
 .dock.collapsed .grip { display: none; }
 .dock.collapsed { width: 34px; }
