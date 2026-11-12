@@ -217,6 +217,11 @@ strip — the column hands its width back to the chat and keeps only those two
 buttons — and the strip's `⟨` expands it again. `×` closes the panel outright,
 which is what the toolbar toggle undoes.
 
+The panel's left edge is a grip: drag it to resize, or focus it and use `←`/`→`
+(`Shift` for bigger steps). The width is kept in
+`localStorage['t3timeline:width']` and applies to both layouts; double-click the
+grip to go back to the default.
+
 The sidebar's thread list is also re-sorted into one run per project — no
 settings, it is on once the script loads; see
 [Threads grouped under their project](#threads-grouped-under-their-project) for
