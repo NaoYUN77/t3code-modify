@@ -207,14 +207,15 @@ node install.mjs --uninstall
 
 Then hard-reload the T3 Code window, open a thread, and click the pulse icon in
 the thread header. Drag the playhead (or click a coloured dot, or a row in the
-list) to move through the conversations; `⌘/Ctrl+Shift+T` shows and hides the
-panel, and with the panel focused `←`/`→` move one conversation at a time,
-`Home`/`End` go to the ends of the task.
+list) to move through the conversations; with the panel focused `←`/`→` move one
+conversation at a time, `Home`/`End` go to the ends of the task. There is no
+global keyboard shortcut — it would collide with the app's own bindings — so the
+toolbar toggle is how the panel opens and closes.
 
 The header carries two buttons of its own. `⟩` collapses the panel to a 34px
 strip — the column hands its width back to the chat and keeps only those two
 buttons — and the strip's `⟨` expands it again. `×` closes the panel outright,
-which is what the toolbar toggle or `⌘/Ctrl+Shift+T` undoes.
+which is what the toolbar toggle undoes.
 
 The sidebar's thread list is also re-sorted into one run per project — no
 settings, it is on once the script loads; see
