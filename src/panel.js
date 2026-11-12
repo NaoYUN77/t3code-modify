@@ -477,7 +477,13 @@ export class TimelinePanel {
       e.preventDefault();
       origin = { x: e.clientX, width: this.dock.getBoundingClientRect().width };
       this.dock.classList.add('resizing');
-      grip.setPointerCapture(e.pointerId);
+      // Not every pointer can be captured (a synthetic or already-released
+      // one throws); the drag still works, it just stops at the panel's edge.
+      try {
+        grip.setPointerCapture(e.pointerId);
+      } catch {
+        /* no capture available */
+      }
     });
     grip.addEventListener('pointermove', (e) => {
       if (!origin) return;
