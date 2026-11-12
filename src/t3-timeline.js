@@ -134,9 +134,19 @@ export async function boot() {
     }
     integration.setActive(true);
     panel.setThread({ title: '正在连接 T3 Code…', id: threadId });
+    // In the desktop app the header's thread line is hidden by the docked
+    // layout, so what this side knows goes in the body: no DevTools required.
+    const net = window.__t3panelNet;
+    if (net) {
+      panel.setEmptyNote(
+        `等待服务器地址… 捕获：base ${net.base || '无'} · ticket ${net.ticket ? '有' : '无'} · ` +
+          `headers ${net.headers ? '有' : '无'}`,
+      );
+    }
     try {
       const transport = await resolveTransport();
       client = await new T3Client(transport).connect();
+      if (net) panel.setEmptyNote(`已连接 ${transport?.base || location.origin} · 等待快照…`);
       log('connected for', threadId, transport?.base || location.origin);
 
       let refetch = null;
@@ -181,6 +191,17 @@ export async function boot() {
     } catch (e) {
       log('subscribe failed', e);
       panel.setThread({ title: `连接失败：${e.message}`, id: threadId });
+      if (net) {
+        const globals = Object.keys(window)
+          .filter((k) => /t3|electron|bridge|native|ipc/i.test(k))
+          .slice(0, 12)
+          .join(', ');
+        panel.setEmptyNote(
+          `连接失败：${e.message}\n捕获：base ${net.base || '无'} · ticket ${net.ticket ? '有' : '无'} · ` +
+            `headers ${net.headers ? '有' : '无'} · thread ${net.threadId ? net.threadId.slice(0, 8) : '无'}\n` +
+            `全局：${globals || '无'}`,
+        );
+      }
     }
   };
 

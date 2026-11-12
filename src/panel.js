@@ -282,7 +282,7 @@ const CSS = `
 .turnsep.edge { margin: 7px 8px; color: var(--tl-fg-faint); }
 .turnsep.edge::after { flex: 0 0 0; }
 .empty { color: var(--tl-fg-faint); padding: 20px 14px; text-align: center; }
-.empty .note { display: block; margin-top: 6px; font-size: 11px; opacity: .75; word-break: break-all; }
+.empty .note { display: block; margin-top: 6px; font-size: 11px; opacity: .75; word-break: break-all; white-space: pre-line; }
 `;
 
 export class TimelinePanel {
