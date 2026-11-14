@@ -30,7 +30,7 @@ that, so the panel draws the ends:
 What one conversation opens to — and only that conversation: the others are one
 drag of the track away, not a list underneath it:
 
-![a conversation open: what was asked, then what came of it](docs/conversation.png)
+![one conversation open: its question in the header, its reply rendered below](docs/conversation.png)
 
 **The body is the reply**, and it is rendered rather than shown as source. The
 panel understands the Markdown an agent usually writes — headings, lists,
