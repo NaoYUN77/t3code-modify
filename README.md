@@ -27,9 +27,10 @@ that, so the panel draws the ends:
 | **the end** | the last thing the agent put in front of the user before that next message: an answer, a question, an ask for a key, an ask for permission. On this thread that is 135 answers, 5 asks for a key and 1 question — and 9 conversations that ended on nothing at all. |
 | **what is folded away** | everything else: tool calls, commands, file changes and their diffs, plans, subagent transcripts, checkpoints, compactions. 3376 steps fold into those 150 conversations, and one conversation's middle runs to 360 of them. They are counted, not shown — nothing in the panel is a diff or a tool call any more. |
 
-What one conversation opens to, then its neighbours below it:
+What one conversation opens to — and only that conversation: the others are one
+drag of the track away, not a list underneath it:
 
-![a conversation open: what was asked, then what came of it](docs/conversation.png)
+![one conversation open: its question in the header, its reply rendered below](docs/conversation.png)
 
 **The body is the reply**, and it is rendered rather than shown as source. The
 panel understands the Markdown an agent usually writes — headings, lists,
@@ -223,8 +224,8 @@ node install.mjs --uninstall
 ```
 
 Then hard-reload the T3 Code window, open a thread, and click the pulse icon in
-the thread header. Drag the playhead (or click a coloured dot, or a row in the
-list) to move through the conversations; with the panel focused `←`/`→` move one
+the thread header. Drag the playhead (or click a coloured dot) to move through
+the conversations; with the panel focused `←`/`→` move one
 conversation at a time, `Home`/`End` go to the ends of the task. There is no
 global keyboard shortcut — it would collide with the app's own bindings — so the
 toolbar toggle is how the panel opens and closes.
@@ -437,11 +438,6 @@ CJK system fonts.
   panel has every step and no way to ask for one. "What happened in this
   conversation" — a collapsed list under the reply, or a second playhead — is the
   obvious next thing, and it is why `timeline-core.js` still shapes all of them.
-- **A list that scrolls the whole history.** The list is a window of ±60
-  conversations around the playhead; at 150 conversations that is most of the
-  thread at the present and 90 of them at the top, so reaching the beginning
-  still means dragging the track. A virtualised list would let the list itself
-  scroll end to end.
 - **"Still working" from something better than an item's status.** The signal is
   the newest item's `running` status and nothing else: a run that is alive but
   stuck reads exactly like one that is thinking, and a run killed mid-item leaves

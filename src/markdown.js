@@ -20,6 +20,9 @@ function inline(text) {
   s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
   s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label, url) =>
     /^https?:\/\//i.test(url) ? `<span class="md-link" title="${url}">${label}</span>` : label);
+  // The other way model output writes a link: `<https://…>`, which markdown
+  // reads as an autolink. Rendered bare it would keep its angle brackets.
+  s = s.replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, '<span class="md-link" title="$1">$1</span>');
   s = s.replace(/\u0000(\d+)\u0000/g, (m, i) => `<code class="md-ic">${codes[Number(i)] ?? ''}</code>`);
   return s;
 }
@@ -116,7 +119,11 @@ export function plainText(text) {
     .replace(/\*\*([^*\n]+)\*\*/g, '$1')
     .replace(/__([^_\n]+)__/g, '$1')
     .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, '$1')
+    .replace(/<(https?:\/\/[^\s>]+)>/g, '$1')
     .replace(/^\s*(#{1,6}|[-*+]|>|\d+[.)])\s+/gm, '')
+    // A pair cut in half by the preview's own truncation, or emphasis the model
+    // opened and never closed: the markers are noise in a one-line summary.
+    .replace(/\*\*|__/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

@@ -11,14 +11,6 @@ import { NODE_META, formatTime, oneLine } from './timeline-core.js';
 // labelled by the kind of step the agent's last word was.
 const CONV = NODE_META.conversation;
 
-// How many conversations the list renders either side of the selected one. The
-// list is a window rather than the whole history: 2500 rows cost ~300ms to lay
-// out, against ~10ms for 120, and the panel redraws whenever the thread moves.
-// The track above is how the whole task is traversed; the list keeps the
-// conversations around wherever you are, at a cost that does not grow with the
-// thread.
-const LIST_SPAN = 60;
-
 const CSS = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -52,9 +44,6 @@ const CSS = `
   --tl-fg-faint: var(--app-theme-muted-foreground, var(--muted-foreground, #565f89));
   --tl-strong: var(--app-theme-text, var(--foreground, #fff));
   --tl-accent: var(--app-theme-accent, var(--primary, #7aa2f7));
-  --tl-hover: var(--app-theme-muted, var(--muted, #20202c));
-  --tl-sel: var(--app-theme-accent-surface, var(--accent, #2a3350));
-  --tl-sel-fg: var(--app-theme-accent-surface-foreground, var(--accent-foreground, #c8d3f5));
   --tl-code-bg: var(--app-theme-code-background, var(--code-background, #101018));
   --tl-code-fg: var(--app-theme-code-foreground, var(--code-foreground, #cfd6f7));
   --tl-error: var(--app-theme-error, var(--error, #f7768e));
@@ -178,9 +167,6 @@ const CSS = `
   --tl-fg-faint: var(--app-theme-muted-foreground, var(--muted-foreground, #a1a1aa));
   --tl-strong: var(--app-theme-text, var(--foreground, #18181b));
   --tl-accent: var(--app-theme-accent, var(--primary, #3b6fd4));
-  --tl-hover: var(--app-theme-muted, var(--muted, #f4f4f5));
-  --tl-sel: var(--app-theme-accent-surface, var(--accent, #e8edfb));
-  --tl-sel-fg: var(--app-theme-accent-surface-foreground, var(--accent-foreground, #1e3a8a));
   --tl-code-bg: var(--app-theme-code-background, var(--code-background, #f7f7f8));
   --tl-code-fg: var(--app-theme-code-foreground, var(--code-foreground, #27272a));
   --tl-error: var(--app-theme-error, var(--error, #dc2626));
@@ -289,13 +275,16 @@ const CSS = `
 .legend { display: flex; gap: 10px; margin-top: 8px; font-size: var(--text-2xs, 11px); color: var(--tl-fg-faint); }
 .legend i { font-style: normal; }
 
+/* One conversation, and nothing else: the selected checkpoint fills the body
+   below the scrubber. The panel used to list the neighbouring conversations
+   under it, which put other checkpoints' questions and answers on screen while
+   one was being read. */
 .detail {
-  flex: 0 0 auto; max-height: 46%; display: flex; flex-direction: column;
-  padding: 11px 14px; border-bottom: 1px solid var(--tl-line); background: var(--tl-surface-2);
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  padding: 11px 14px; background: var(--tl-surface-2);
 }
-/* Only the body scrolls: the restore action belongs to the step and has to stay
-   within reach however long the diff is. */
-.detail .dscroll { overflow: auto; min-height: 0; }
+/* The header stays put; the reply below it is the part that scrolls. */
+.detail .dscroll { flex: 1 1 auto; overflow: auto; min-height: 0; scrollbar-color: var(--tl-scroll) transparent; }
 .detail .dhead { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
 .detail .name { font-weight: 600; color: var(--tl-strong); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail .when { margin-left: auto; color: var(--tl-fg-faint); white-space: nowrap; font-size: var(--text-2xs, 11px); font-variant-numeric: tabular-nums; }
@@ -333,34 +322,6 @@ const CSS = `
 .msg.none { color: var(--tl-fg-faint); }
 .outcome { margin-top: 6px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
 
-.list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 6px 14px; scrollbar-color: var(--tl-scroll) transparent; }
-.row {
-  display: grid; grid-template-columns: 26px 1fr; gap: 6px; align-items: baseline;
-  padding: 5px 8px; border-radius: 6px; cursor: pointer;
-}
-.row:hover { background: var(--tl-hover); }
-.row.on { background: var(--tl-sel); color: var(--tl-sel-fg); box-shadow: inset 2px 0 0 var(--tl-accent); }
-.row.on .sum, .row.on .no, .row.on .time { color: inherit; }
-.row .no { color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); text-align: right; font-variant-numeric: tabular-nums; }
-.row .txt { min-width: 0; }
-.row .lead { display: flex; align-items: baseline; gap: 6px; }
-.row .sum { color: var(--tl-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .time { margin-left: auto; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); font-variant-numeric: tabular-nums; }
-/* A conversation is two lines — what was asked, what came of it — and the row is
-   the boundary between one conversation and the next, so it carries the rule. */
-.row.conv + .row.conv { border-top: 1px solid var(--tl-line); border-radius: 0; }
-.row .rep { display: flex; gap: 6px; margin-top: 2px; color: var(--tl-fg-dim); font-size: var(--text-xs, 12px); }
-.row .rep > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .rep .mark { color: var(--tl-fg-faint); }
-.row .rep.none { color: var(--tl-fg-faint); }
-.row.on .rep, .row.on .rep .mark { color: inherit; }
-.row.s1 { opacity: .82; }
-.row.s2 { opacity: .6; }
-.row.s1 .sum, .row.s2 .sum { color: var(--tl-fg-dim); }
-.turnsep { display: flex; align-items: center; gap: 8px; margin: 9px 8px 3px; color: var(--tl-fg-faint); font-size: var(--text-2xs, 11px); }
-.turnsep::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--tl-line); }
-.turnsep.edge { margin: 7px 8px; color: var(--tl-fg-faint); }
-.turnsep.edge::after { flex: 0 0 0; }
 .empty { color: var(--tl-fg-faint); padding: 20px 14px; text-align: center; }
 .empty .note { display: block; margin-top: 6px; font-size: var(--text-xs, 12px); opacity: .75; word-break: break-all; white-space: pre-line; }
 `;
@@ -621,10 +582,10 @@ export class TimelinePanel {
     return this;
   }
 
-  select(i, { scroll = true } = {}) {
+  select(i) {
     if (!this.nodes.length) return this;
     this.index = Math.max(0, Math.min(i, this.nodes.length - 1));
-    this.#paintSelection({ scroll });
+    this.#paintSelection();
     return this;
   }
 
@@ -670,7 +631,6 @@ export class TimelinePanel {
           </div>
         </div>
         <div class="detail"></div>
-        <div class="list"></div>
       </div>`;
     this.shadow.append(style, dock);
     this.dock = dock;
@@ -707,17 +667,13 @@ export class TimelinePanel {
         /* pointer already released */
       }
     });
-    // Clicks on the dots and on the rows are delegated: there are a few
-    // thousand of each, and one listener per element costs more to build than
-    // the rest of the panel put together.
+    // Clicks on the dots are delegated: there are a few thousand of them, and
+    // one listener per element costs more to build than the rest of the panel
+    // put together.
     dock.querySelector('.dots').addEventListener('click', (e) => {
       const dot = e.target.closest('.dot');
       if (!dot) return;
       this.select([...dot.parentElement.children].indexOf(dot));
-    });
-    dock.querySelector('.list').addEventListener('click', (e) => {
-      const row = e.target.closest('.row');
-      if (row) this.select(Number(row.dataset.k), { scroll: false });
     });
     dock.addEventListener('keydown', (e) => this.#onKey(e));
   }
@@ -784,12 +740,10 @@ export class TimelinePanel {
       shown.push(`<span class="turnmark" style="left:${at(k)}%">${this.nodes[k].turn}</span>`);
     }
     this.shadow.querySelector('.turnmarks').innerHTML = shown.join('');
-
-    this.#buildList();
   }
 
   /** Everything that depends on which step is selected. Runs on every drag step. */
-  #paintSelection({ scroll = false } = {}) {
+  #paintSelection() {
     const n = this.nodes.length;
     const i = Math.max(0, Math.min(this.index, Math.max(0, n - 1)));
     const node = this.nodes[i];
@@ -802,42 +756,13 @@ export class TimelinePanel {
     // the panel's own label for the number would only say it twice.
     this.shadow.querySelector('.readout .turn').textContent = formatTime(node?.startedAt);
 
-    // The window follows the selection, so it is rebuilt only once a drag has
-    // carried the playhead out of it — not on every step of one.
-    if (this.rowFor?.size && !this.rowFor.has(i)) this.#buildList();
-
     if (this.selected !== i) {
       this.dotEls?.[this.selected]?.classList.remove('on');
-      this.rowFor?.get(this.selected)?.classList.remove('on');
       this.dotEls?.[i]?.classList.add('on');
-      this.rowFor?.get(i)?.classList.add('on');
       this.selected = i;
     }
 
     this.#paintDetail(node);
-    if (scroll) this.#reveal(i);
-  }
-
-  /**
-   * Scroll the list so the selected row is on screen — but only when it is not
-   * already. `scrollIntoView` is by far the most expensive thing a drag step
-   * does (~9ms of the 10 it costs, against 0.2ms for the repaint), and during a
-   * drag the row usually has not moved out of view yet. The comparison uses
-   * offsets measured when the window was built, so nothing is measured again.
-   */
-  #reveal(i) {
-    const row = this.rowFor?.get(i);
-    if (!row) return;
-    const list = this.shadow.querySelector('.list');
-    const at = this.rowTop?.get(i);
-    if (!list || !at) {
-      row.scrollIntoView({ block: 'nearest' });
-      return;
-    }
-    const top = at.top - list.scrollTop;
-    if (top < at.margin || top + at.height > list.clientHeight - at.margin) {
-      row.scrollIntoView({ block: 'nearest' });
-    }
   }
 
   #paintDetail(node) {
@@ -852,55 +777,7 @@ export class TimelinePanel {
         <span class="when">${esc(formatTime(node.startedAt))}</span>
       </div>`;
 
-    el.innerHTML = `<div class="dscroll">${head}${conversationBody(node)}</div>`;
-  }
-
-  /**
-   * Rows for the window of conversations around the selection. Rebuilt when the
-   * conversations themselves change, and when the selection leaves the window.
-   *
-   * A row is one boundary: what the user asked, and under it what the agent
-   * finally said. Nothing from in between is listed — that is the whole point of
-   * grouping this way — so the row is the boundary and needs no separator of its
-   * own.
-   */
-  #buildList() {
-    const n = this.nodes.length;
-    const at = Math.max(0, Math.min(this.index, Math.max(0, n - 1)));
-    const from = Math.max(0, at - LIST_SPAN);
-    const to = Math.min(n, at + LIST_SPAN + 1);
-
-    const html = [];
-    // How much of the history is off either end, so the window is not mistaken
-    // for the whole task.
-    if (from > 0) html.push(`<div class="turnsep edge">上方还有 ${from} 次对话</div>`);
-    for (let k = from; k < to; k++) {
-      const node = this.nodes[k];
-      html.push(
-        `<div class="row conv s${CONV.tier}" data-k="${k}">` +
-          `<div class="no">${k + 1}</div>` +
-          `<div class="txt">` +
-          `<div class="lead">` +
-          `<span style="color:${accentOf(node)}">${CONV.glyph}</span>` +
-          `<span class="sum">${esc(plainText(node.summary))}</span>` +
-          `<span class="time">${esc(formatTime(node.startedAt))}</span>` +
-          `</div>` +
-          replyLine(node) +
-          `</div></div>`,
-      );
-    }
-    if (to < n) html.push(`<div class="turnsep edge">下方还有 ${n - to} 次对话</div>`);
-    const list = this.shadow.querySelector('.list');
-    list.innerHTML = html.join('') || '';
-    if (!this.nodes.length) list.replaceChildren(emptyRow());
-    // Kept for the selection repaint, which must not touch the other rows.
-    this.rowFor = new Map([...list.querySelectorAll('.row')].map((el) => [Number(el.dataset.k), el]));
-    // Where each row sits in the list, measured once here so that revealing the
-    // selected one during a drag needs no further measurement (see #reveal).
-    const listTop = list.offsetTop;
-    this.rowTop = new Map(
-      [...this.rowFor].map(([k, el]) => [k, { top: el.offsetTop - listTop, height: el.offsetHeight, margin: 6 }]),
-    );
+    el.innerHTML = `${head}<div class="dscroll">${conversationBody(node)}</div>`;
   }
 }
 
@@ -909,16 +786,6 @@ export class TimelinePanel {
  *  never did. */
 function accentOf(node) {
   return node.reply || node.busy ? CONV.accent : 'var(--tl-stop)';
-}
-
-/** The second line of a row: what the agent finally said, in one line. */
-function replyLine(node) {
-  if (node.reply) {
-    return `<div class="rep"><span class="mark">▸</span><span>${esc(oneLine(plainText(node.reply), 110))}</span></div>`;
-  }
-  // `▸` says there was a reply, `■` that there never will be one, `…` that this
-  // one is still coming.
-  return `<div class="rep none"><span class="mark">${node.busy ? '…' : '■'}</span><span>${esc(whyUnanswered(node))}</span></div>`;
 }
 
 /**
@@ -940,13 +807,12 @@ function whyUnanswered(node) {
   return '没有单独的回复';
 }
 
-/** The failure's own words, when they are short enough to sit in a row.
+/** The failure's own words, when they are short enough to sit beside the note.
  *  `oneLine` and not the raw text: a failure message runs to a whole stack. */
 function tail(node) {
   return node.stopText ? ` · ${esc(oneLine(node.stopText, 120))}` : '';
 }
 
-/** The body of the detail pane: what was asked, and what came of it. */
 /**
  * What the reply pane shows: the agent's answer, rendered.
  *
@@ -967,13 +833,6 @@ function conversationBody(node) {
   const said = node.stopText && !node.reply.includes(node.stopText) ? tail(node) : '';
   const after = node.stop ? `<div class="outcome">这之后${node.stop === 'error' ? '出错' : '被打断'}${said}</div>` : '';
   return `<div class="msg md">${markdownMarkup(node.reply)}</div>${after}`;
-}
-
-function emptyRow() {
-  const d = document.createElement('div');
-  d.className = 'empty';
-  d.innerHTML = emptyMarkup('');
-  return d;
 }
 
 /** The empty state, plus the host's note when it has one. */
